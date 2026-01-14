@@ -1,0 +1,23 @@
+name: quasar  # The name for your new environment
+channels:
+  - conda-forge   # The best channel for these packages
+dependencies:
+  # --- 1. Packages for CONDA to install ---
+  # Let Conda handle the big, complex libraries
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pyqt >=6   # Conda will grab PyQt6, Qt6, and sip
+  - pyqtgraph
+  - pyserial
+  - pyyaml
+  - pyzmq
+  - pyopengl
+  - vispy
+
+  # --- 2. Packages for PIP to install ---
+  - pip:     
+    - cflib
+    - cfclient      
+    - natnet  
