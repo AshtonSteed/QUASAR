@@ -9,7 +9,7 @@ def logger_worker(state, stop_event, filename="flight_log.csv"):
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
         
-        writer.writerow(['Timestamp', 'Motive_X', 'Motive_Y', 'Motive_Z'])
+        writer.writerow(['Timestamp', 'Motive_X', 'Motive_Y', 'Motive_Z, Error'])
         
         while not stop_event.is_set():
             # 1. Get atomic snapshot of the entire system
@@ -18,14 +18,14 @@ def logger_worker(state, stop_event, filename="flight_log.csv"):
             # 2. Write to disk
             writer.writerow([
                 data['t'], 
-                data['mx'], data['my'], data['mz'], 
+                data['mx'], data['my'], data['mz'], data['error'], 
             ])
             
             # 3. Flush occasionally (optional, safer for crashes)
             # f.flush() 
             
            
-            time.sleep(0.1)
+            time.sleep(0.05)
             
     print("Logging complete.")
 

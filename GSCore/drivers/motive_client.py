@@ -23,14 +23,20 @@ def print_worker(pose_queue):
         try:
             # We use only the LATEST data.
             # If the printer is slow, it skips frames.
-            packet = pose_queue.get(timeout=1.0)
+            packet = pose_queue.get(timeout=0.1)
+            
+                
             
             x, y, z, err = packet.x, packet.y, packet.z, packet.error
             
             # \r overwrites the same line so your terminal doesn't flood
-            print(f"Motive: X={x:.3f} Y={y:.3f} Z={z:.3f}, ERR={1000 * err:.3f} mm  ", end="\r")
+            if packet.valid:
+                print(f"Motive: X={x:.3f} Y={y:.3f} Z={z:.3f}, ERR={1000 * err:.3f} mm  ", end="\r")
+            else:
+                print(f"Motive: X=XXXX Y=XXXX Z=XXXX, ERR=LOST  ", end="\r")
             
         except queue.Empty:
+            print(f"Motive: X=XXXX Y=XXXX Z=XXXX, ERR=LOST  ", end="\r")
             pass
 
 # Create a motive listener thread to receive data
@@ -49,20 +55,23 @@ def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = Non
                 pos = body.pos
                 rot = body.rot
                 err = body.marker_error  / math.sqrt(N)# Mean marker error
+                valid = body.tracking_valid
+                
                 
                 # Package 6DOF state from Motive
-                latest_pose = Pose.from_motive(pos, rot, err)
+                latest_pose = Pose.from_motive(pos, rot, err, valid)
                 # Update shared logger state
                 if shared_state:
-                    shared_state.pose = latest_pose
+                    shared_state.update_motive(latest_pose)
                 # Push to the queue
-                try:
-                    pose_queue.put_nowait(latest_pose)
-                except queue.Full:
-                    pose_queue.get_nowait()
-                    pose_queue.put_nowait(latest_pose)
-            
-                return
+                if valid:
+                    try:
+                        pose_queue.put_nowait(latest_pose)
+                    except queue.Full:
+                        pose_queue.get_nowait()
+                        pose_queue.put_nowait(latest_pose)
+                
+        return
 
     motive_client = NatNetClient(server_ip_address=MOTIVE_SERVER_IP, local_ip_address="127.0.0.1", use_multicast=False)
     motive_client.connect()
@@ -72,17 +81,20 @@ def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = Non
     print("Connectd to Motive.")
     return motive_client
     
-    
+
+def start_print_thread(pose_queue: queue.Queue):
+    p_thread = threading.Thread(target=print_worker, args=(pose_queue,))
+    p_thread.start()
 def print_motive_data():
     #Example useage in main thread
     # Main thread creates pose queue, motive client thread, and any other threads
     pose_queue = queue.Queue(maxsize=1)
     shared_state = SystemState()
     motive_client = start_motive_stream(pose_queue, shared_state)
-    p_thread = threading.Thread(target=print_worker, args=(pose_queue,))
-    p_thread.start()
+    start_print_thread(pose_queue)
     #report_threads()
     pass
+
     
 
 

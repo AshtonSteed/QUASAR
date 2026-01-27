@@ -2,7 +2,7 @@ import time
 import threading
 
 class Pose:
-    def __init__(self, x=0.0, y=0.0, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0, error=0.0):
+    def __init__(self, x=0.0, y=0.0, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0, error=0.0, valid=False):
         self.x = x
         self.y = y
         self.z = z
@@ -11,9 +11,10 @@ class Pose:
         self.qz = qz
         self.qw = qw
         self.error = error
+        self.valid = valid
 
     @classmethod
-    def from_motive(cls, pos, rot, err):
+    def from_motive(cls, pos, rot, err, valid):
        
         
         return cls(
@@ -24,7 +25,8 @@ class Pose:
             qy = rot[2],     # Swapped/Negated based on axis rule
             qz = rot[1],
             qw = rot[3],
-            error = err
+            error = err,
+            valid = valid
         )
     
     def xyz(self):
@@ -62,5 +64,6 @@ class SystemState:
                 'mx': self.pose.x,
                 'my': self.pose.y,
                 'mz': self.pose.z,
+                'error': self.pose.error,
             }
         

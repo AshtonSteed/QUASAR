@@ -25,9 +25,10 @@ def mock_motive_worker(pose_queue, system_state):
         
         # Quaternions (Just flat for now)
         qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
-        
-       
-        pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0)
+
+
+
+        pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0, True)
         # 2. Update STATE (For Logger/GUI)
         if system_state:
             system_state.pose = pose
