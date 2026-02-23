@@ -1,10 +1,13 @@
 # Might not need, cflib wrappers for common stuff
 # Sending 6DOF to UAV, changing setpoint, UAV parameters, logging functions
+import math
 import queue
 import time
 import threading
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
+from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
+from cflib.positioning.motion_commander import MotionCommander
 from cflib.crazyflie.log import LogConfig
 from GSCore.drivers.motive_client import start_motive_stream
 from GSCore.drivers.mock_motive_client import start_mock_stream
@@ -21,6 +24,7 @@ class CrazyflieDriver:
         self.pose_queue = pose_queue
         self.command_queue = command_queue
         self.cf = Crazyflie(rw_cache='./cache')
+        self.scf = SyncCrazyflie(uri, cf=self.cf)
         
         # --- Threading Events
         self.is_connected = threading.Event()
@@ -36,6 +40,7 @@ class CrazyflieDriver:
         # --- Control State ---
         self.running = False
         self.control_thread = None
+        self.update_thread = None
 
     
     def connect(self):
@@ -64,10 +69,13 @@ class CrazyflieDriver:
             print("Cannot start: Not connected.")
             return
 
+    
         self.running = True
-        self.start_position_logging() # Start logging position data from CF
+        self._arm_kalman()
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
         self.control_thread.start()
+        self.update_thread = threading.Thread(target=self._pose_sender_loop, daemon=True)
+        self.update_thread.start() # Start the thread that continuously sends pose updates to the CF
         print("Control loop started.")
 
     def stop(self):
@@ -157,7 +165,8 @@ class CrazyflieDriver:
             # Invalid position, do not update state estimation or commands
             return
         mx, my, mz, qx, qy, qz, qw = pose.x, pose.y, pose.z, pose.qx, pose.qy, pose.qz, pose.qw
-        self.cf.extpos.send_extpose(mx, my, mz, qx, qy, qz, qw)
+        #self.cf.extpos.send_extpose(mx, my, mz, qx, qy, qz, qw)
+        self.cf.extpos.send_extpos(mx, my, mz)
         
     from cflib.crazyflie.log import LogConfig
 
@@ -171,6 +180,7 @@ class CrazyflieDriver:
         log_conf.add_variable('stateEstimate.x', 'float')
         log_conf.add_variable('stateEstimate.y', 'float')
         log_conf.add_variable('stateEstimate.z', 'float')
+        log_conf.add_variable('kalman.varX', 'float')
         log_conf.add_variable('pm.batteryLevel')
         
 
@@ -195,10 +205,29 @@ class CrazyflieDriver:
         x = data['stateEstimate.x']
         y = data['stateEstimate.y']
         z = data['stateEstimate.z']
+        xvar = math.sqrt(data['kalman.varX'])
         bat = data['pm.batteryLevel']
     
         # Example: Print only occasionally to avoid spamming console
-        print(f"[{timestamp}] Pos: ({x:.2f}, {y:.2f}, {z:.2f}) | Battery: {bat}%")
+        print(f"[{timestamp}] Pos: ({x:.2f}, {y:.2f}, {z:.2f}) | Variance: {xvar:.5f} | Battery: {bat}%")
+    
+    
+    def _pose_sender_loop(self):
+        """
+        Runs continuously to feed Mocap data to the drone.
+        Must run INDEPENDENTLY of the flight logic.
+        """
+        print("Pose sender started.")
+        while self.running:
+            pose = self._extract_pose_from_queue()
+            if pose and pose.valid:
+                # Send external position to CF
+                self.cf.extpos.send_extpose(
+                    pose.x, pose.y, pose.z,
+                    pose.qx, pose.qy, pose.qz, pose.qw
+                )
+            # 30Hz - 50Hz update rate is standard for Mocap
+            time.sleep(0.01)
     # ==========================================
     # THE CONTROL WORKER
     # ==========================================
@@ -207,11 +236,19 @@ class CrazyflieDriver:
         """
         The main flight loop. Runs in background thread.
         """
-        self._arm_kalman()
+        self.start_position_logging() # Start logging position data from CF
+        self.cf.platform.send_arming_request(True)
         
-        while self.running:
-            self._send_state()
-            time.sleep(0.1) # 10Hz update rate
+        i = 0
+        
+
+        with MotionCommander(self.scf) as mc:
+            mc.up(0.5)
+            time.sleep(2)
+            mc.stop()
+        
+        
+       
         
         
         
@@ -219,7 +256,7 @@ class CrazyflieDriver:
 def test_cf_connection(uri):
     pose_queue = queue.Queue(maxsize=1)
     shared_state = SystemState()
-    motive_client = start_mock_stream(pose_queue, shared_state)
+    motive_client = start_motive_stream(pose_queue, shared_state)
     cflib.crtp.init_drivers()
     driver = CrazyflieDriver(uri, pose_queue, None)
     if driver.connect():
