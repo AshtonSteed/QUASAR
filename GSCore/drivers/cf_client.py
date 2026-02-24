@@ -9,12 +9,13 @@ from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.crazyflie.log import LogConfig
+from cflib.utils.encoding import decompress_quaternion
 from GSCore.drivers.motive_client import start_motive_stream
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from common_classes import SystemState, Pose
 
 class CrazyflieDriver:
-    def __init__(self, uri, pose_queue, command_queue):
+    def __init__(self, uri, pose_queue, command_queue, shared_state=None):
         """
         uri: Radio URI
         pose_queue: The shared queue with NatNet data
@@ -23,6 +24,7 @@ class CrazyflieDriver:
         self.uri = uri
         self.pose_queue = pose_queue
         self.command_queue = command_queue
+        self.logging_state = shared_state
         self.cf = Crazyflie(rw_cache='./cache')
         self.scf = SyncCrazyflie(uri, cf=self.cf)
         
@@ -170,29 +172,59 @@ class CrazyflieDriver:
         
     from cflib.crazyflie.log import LogConfig
 
-    def start_position_logging(self):
-        # 1. Configure the Log Block
-        # Period is how often the crazyflie sends data
-        log_conf = LogConfig(name='Position', period_in_ms=50)
-
-      
-        # Add all variables to log from CF parameter list
-        log_conf.add_variable('stateEstimate.x', 'float')
-        log_conf.add_variable('stateEstimate.y', 'float')
-        log_conf.add_variable('stateEstimate.z', 'float')
-        log_conf.add_variable('kalman.varX', 'float')
-        log_conf.add_variable('pm.batteryLevel')
+    def start_logging(self):
         
+        # Position Logging, High frequency logging of drone position and rotation from UAV estimator
+        pose_log = LogConfig(name='Pose', period_in_ms=15) # 67Hz, faster logging
 
+        # Add all variables to log from CF parameter list
+        pose_log.add_variable('stateEstimateZ.x', 'int16_t')
+        pose_log.add_variable('stateEstimateZ.y', 'int16_t')
+        pose_log.add_variable('stateEstimateZ.z', 'int16_t')
+        pose_log.add_variable('stateEstimateZ.quat', 'uint32_t')
+    
+        # Dynamics Logging, Moderate frequency logging of velocity, acceleration, and angular rates from UAV estimator
+        dyn_log = LogConfig(name='Dynamics', period_in_ms=25) # 40Hz, moderate logging of estimated dynamics
+        dyn_log.add_variable('stateEstimateZ.vx', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.vy', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.vz', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.ax', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.ay', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.az', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.rateRoll', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.ratePitch', 'int16_t')
+        dyn_log.add_variable('stateEstimateZ.rateYaw', 'int16_t')
+        
+        # Motor logging, Moderate frequency logging of motor setpoints for control debugging
+        motor_log = LogConfig(name='Control', period_in_ms=25) # 40Hz, moderate logging of motor stepoints
+        motor_log.add_variable('motor.m1', 'uint16_t')
+        motor_log.add_variable('motor.m2', 'uint16_t')
+        motor_log.add_variable('motor.m3', 'uint16_t')
+        motor_log.add_variable('motor.m4', 'uint16_t')
+
+        # Health Logging, Low frequency logging of battery and UAV status (flying, crash, etc)
+        health_log = LogConfig(name='Health', period_in_ms=250) # 4Hz, low frequency logging of battery and UAV Status
+        health_log.add_variable('supervisor.info', 'uint16_t') # See CF docs for state codes
+        health_log.add_variable('pm.vbatMV', 'uint16_t') # Battery voltage in mV
+        
         # 3. Add the configuration to the Crazyflie
         try:
-            self.cf.log.add_config(log_conf)
+            self.cf.log.add_config(pose_log)
+            self.cf.log.add_config(dyn_log)
+            self.cf.log.add_config(motor_log)
+            self.cf.log.add_config(health_log)
             
-            # 4. Attach a callback function (What happens when data arrives?)
-            log_conf.data_received_cb.add_callback(self.position_data_callback)
+           # add callback functions from the shared logging state
+            pose_log.data_received_cb.add_callback(self.state.pose_data_callback)
+            dyn_log.data_received_cb.add_callback(self.state.dyn_data_callback)
+            motor_log.data_received_cb.add_callback(self.state.motor_data_callback)
+            health_log.data_received_cb.add_callback(self.state.health_data_callback)
             
             # 5. Start the logging
-            log_conf.start()
+            pose_log.start()
+            dyn_log.start()
+            motor_log.start()
+            health_log.start()
             print("Logging started!")
             
         except KeyError as e:
@@ -200,17 +232,7 @@ class CrazyflieDriver:
         except AttributeError:
             print("Could not add log config, bad configuration.")
     
-    # Function ran whenever log data is received from CF
-    def position_data_callback(self, timestamp, data, logconf):
-        x = data['stateEstimate.x']
-        y = data['stateEstimate.y']
-        z = data['stateEstimate.z']
-        xvar = math.sqrt(data['kalman.varX'])
-        bat = data['pm.batteryLevel']
-    
-        # Example: Print only occasionally to avoid spamming console
-        print(f"[{timestamp}] Pos: ({x:.2f}, {y:.2f}, {z:.2f}) | Variance: {xvar:.5f} | Battery: {bat}%")
-    
+   
     
     def _pose_sender_loop(self):
         """
@@ -236,7 +258,7 @@ class CrazyflieDriver:
         """
         The main flight loop. Runs in background thread.
         """
-        self.start_position_logging() # Start logging position data from CF
+        self.start_logging() # Start logging position data from CF
         self.cf.platform.send_arming_request(True)
         
         i = 0
