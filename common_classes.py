@@ -1,6 +1,7 @@
 import time
 import threading
 from cflib.utils.encoding import decompress_quaternion
+import scipy
 
 class Pose:
     def __init__(self, x=0.0, y=0.0, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0, error=0.0, valid=False):
@@ -104,9 +105,9 @@ class SystemState:
             )
         
         pqr = (
-                data['stateEstimateZ.rateRoll'] / 100.0, # centi-deg/s to deg/s
-                data['stateEstimateZ.ratePitch'] / 100.0,
-                data['stateEstimateZ.rateYaw'] / 100.0
+                data['stateEstimateZ.rateRoll'] / 1000.0, # milirads/s to rad/s
+                data['stateEstimateZ.ratePitch'] / 1000.0,
+                data['stateEstimateZ.rateYaw'] / 1000.0
             )
         with self.lock:
             self.time = timestamp
@@ -151,7 +152,7 @@ class SystemState:
         """
         Returns a flat, fast copy of the current state for the GUI to log and plot.
         Grabbing individual properties prevents reference leaks.
-        """
+        """ 
         with self.lock:
             return {
                 # Timing

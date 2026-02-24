@@ -6,29 +6,61 @@ import queue
 import dearpygui.dearpygui as dpg
 from collections import deque
 import math, time, threading
+import numpy as np
+from scipy.spatial.transform import Rotation
 
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from common_classes import SystemState
 
 class QuasarGUI:
-    def __init__(self, shared_state, window_width=1000):
+    def __init__(self, shared_state):
         self.state = shared_state
-        
-        # Rolling buffers for the plot (X-axis and Y-axes)
         self.max_points = 500
         self.time_data = deque(maxlen=self.max_points)
         
-        # We will start with just Position data for simplicity, 
-        # but you can easily add 'p', 'q', 'r', 'vbat', etc.
-        self.history = {
-            'ex': deque(maxlen=self.max_points),
-            'ey': deque(maxlen=self.max_points),
-            'ez': deque(maxlen=self.max_points),
-            'mx': deque(maxlen=self.max_points),
-            'my': deque(maxlen=self.max_points),
-            'mz': deque(maxlen=self.max_points),
-        }
         
+        # Definition of all charted variables, their groups, and plots
+        # Keys = Chart Names, Values = The exact keys from your get_snapshot()
+        self.plot_config = {
+            "Position (m)": {
+                "Estimate": ['ex', 'ey', 'ez'],
+                "Ground Truth": ['mx', 'my', 'mz']
+            },
+            "Dynamics": {
+                "Velocity (m/s)": ['vx', 'vy', 'vz'],
+                "Acceleration (m/s2)": ['ax', 'ay', 'az'],
+                "Angular Rates (rad/s)": ['p', 'q', 'r']
+            },
+            "Motor Commands": {
+                "Motors": ['m1', 'm2', 'm3', 'm4']}
+        }
+        # Flat tracked variable list
+        self.tracked_vars = []
+        for groups in self.plot_config.values():
+            for var_list in groups.values():
+                self.tracked_vars.extend(var_list)
+        # Generate buffers for each variable
+        self.history = {var: deque(maxlen=self.max_points) for var in self.tracked_vars}
+    
+    def get_trackball_lines(self, quat, scale=50):
+        rot = Rotation.from_quat(quat)
+        rot_matrix = rot.as_matrix()
+        # 2. Define our base 3D unit vectors (X: Forward, Y: Left, Z: Up)
+        axes = np.array([
+            [1, 0, 0], # X axis (Red)
+            [0, 1, 0], # Y axis (Green)
+            [0, 0, 1]  # Z axis (Blue)
+        ])
+        rotated_axes = axes @ rot_matrix.T
+        
+            # Scale them up for the GUI, and negate the screen-Y because GUI Y points DOWN
+        lines_2d = []
+        for axis in rotated_axes:
+            screen_x = axis[0] * scale
+            screen_y = -axis[2] * scale # Mapping 3D Z (Up) to Screen -Y (Up)
+            lines_2d.append([screen_x, screen_y])
+            
+        return lines_2d # Returns endpoints for the X, Y, and Z lines
     def _toggle_visibility(self, sender, app_data, user_data):
         """Hides or shows multiple line series based on the checkbox state"""
         is_checked = app_data
@@ -43,45 +75,83 @@ class QuasarGUI:
     def setup_gui(self):
         dpg.create_context()
         
-        with dpg.window(label="UAV Telemetry", width=800, height=600):
+        with dpg.window(label="UAV Telemetry", width=1000, height=800):
             
-            # --- CONTROL PANEL ---
-            dpg.add_text("Toggle Variables:")
-            with dpg.group(horizontal=True):
-               # Group 1: Position
-                dpg.add_checkbox(
-                    label="Position (X,Y,Z)", 
-                    default_value=True, 
-                    callback=self._toggle_visibility, 
-                    user_data=["series_ex", "series_ey", "series_ez"] # Passed as a list!
-                )
-                dpg.add_checkbox(label="Motive (X Y Z)", default_value=True, 
-                                 callback=self._toggle_visibility, user_data=["series_mx", "series_my", "series_mz"])
+            # ==========================================
+            # 1. TOP DASHBOARD (Control Panel)
+            # ==========================================
+            with dpg.group(): 
+                dpg.add_text("Toggle Variable Groups:")
+                for chart_name, groups in self.plot_config.items():
+                    with dpg.group(horizontal=True):
+                        dpg.add_text(f"{chart_name}:", color=(200, 200, 200))
+                        for group_name, variables in groups.items():
+                            tags = [f"series_{var}" for var in variables]
+                            dpg.add_checkbox(
+                                label=group_name, default_value=True, 
+                                callback=self._toggle_visibility, user_data=tags 
+                            )
             
             dpg.add_spacer(height=10)
             
-            # --- LIVE PLOT ---
-            with dpg.plot(label="UAV State Estimate", height=-1, width=-1):
-                # Add Legend
-                dpg.add_plot_legend()
+            # ==========================================
+            # 2. STATUS PANEL
+            # ==========================================
+            with dpg.group(horizontal=True):
+                dpg.add_text("STATUS |", color=(200, 200, 200))
+                dpg.add_text("VBAT: -- V", tag="status_vbat")
+                dpg.add_text("|")
+                dpg.add_text("ARMED: FALSE", tag="status_armed", color=(150, 150, 150))
+                dpg.add_text("FLYING: FALSE", tag="status_flying", color=(150, 150, 150))
+                dpg.add_text("CRASHED: FALSE", tag="status_crashed", color=(150, 150, 150))
+                
+            dpg.add_spacer(height=10) 
+            
+            # ==========================================
+            # 3. BOTTOM SECTION: PLOTS & TRACKBALL
+            # ==========================================
+            with dpg.group(horizontal=True):
+                
+                # --- LEFT SIDE: SUBPLOTS ---
+                # width=-180 leaves exactly 180 pixels of space on the right
+                with dpg.group(width=-180):
+                    num_charts = len(self.plot_config)
+                    with dpg.subplots(num_charts, 1, label="Telemetry", width=-1, height=-1, link_all_x=True):
+                        
+                        for chart_name, groups in self.plot_config.items():
+                            with dpg.plot(label=chart_name):
+                                dpg.add_plot_legend()
+                                
+                                x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)")
+                                if not hasattr(self, 'master_x_axis'):
+                                    self.master_x_axis = x_axis 
+                                    
+                                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label=chart_name)
+                                
+                                for group_name, variables in groups.items():
+                                    for var in variables:
+                                        line_label = f"{group_name} {var.upper()}"
+                                        dpg.add_line_series(
+                                            [], [], 
+                                            label=line_label, tag=f"series_{var}", parent=y_axis
+                                        )
 
-                # Add X Axis
-                self.x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)")
-                
-                # Add Y Axis
-                # Add Y Axis
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Position (m)")
-                
-                # Explicitly set the parent to the y_axis ID
-                dpg.add_line_series([], [], label="X (m)", tag="series_ex", parent=y_axis)
-                dpg.add_line_series([], [], label="Y (m)", tag="series_ey", parent=y_axis)
-                dpg.add_line_series([], [], label="Z (m)", tag="series_ez", parent=y_axis)
-                dpg.add_line_series([], [], label="mX (m)", tag="series_mx", parent=y_axis)
-                dpg.add_line_series([], [], label="mY (m)", tag="series_my", parent=y_axis)
-                dpg.add_line_series([], [], label="mZ (m)", tag="series_mz", parent=y_axis)
-                
+                # --- RIGHT SIDE: TRACKBALL ---
+                # This drops perfectly into the 180-pixel gap we left on the right
+                with dpg.group():
+                    dpg.add_text("Orientation", color=(200, 200, 200))
+                    
+                    with dpg.drawlist(width=150, height=150):
+                        dpg.draw_rectangle([0,0], [150,150], color=[50,50,50], fill=[30,30,30])
+                        
+                        with dpg.draw_node(tag="trackball_node"):
+                            dpg.draw_line([0,0], [0,0], color=[255, 50, 50], thickness=3, tag="tb_x")
+                            dpg.draw_line([0,0], [0,0], color=[50, 255, 50], thickness=3, tag="tb_y")
+                            dpg.draw_line([0,0], [0,0], color=[50, 150, 255], thickness=3, tag="tb_z")
+                            
+                    dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
-        dpg.create_viewport(title='UAV Testbed', width=850, height=650)
+        dpg.create_viewport(title='UAV Testbed', width=1050, height=850)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         
@@ -89,36 +159,70 @@ class QuasarGUI:
         start_time = time.time()
         view_window_seconds = 5.0 
         
-        last_plotted_time = 0.0 
+        last_t = 0.0 
         
         while dpg.is_dearpygui_running():
             snap = self.state.get_snapshot()
             
             # Only append if the data's timestamp is newer than the last one
-            if snap['t'] > last_plotted_time:
-                last_plotted_time = snap['t']
-                
-                # Calculate 'real' computer time
+            if snap['t'] > last_t:
+                last_t = snap['t']
                 current_time = time.time() - start_time
-                
-                # Append to buffers
                 self.time_data.append(current_time)
-                self.history['ex'].append(snap['ex'])
-                self.history['ey'].append(snap['ey'])
-                self.history['ez'].append(snap['ez'])
-                self.history['mx'].append(snap['mx'])
-                self.history['my'].append(snap['my'])
-                self.history['mz'].append(snap['mz'])
                 
-                # Update the DPG line series
                 x_list = list(self.time_data)
-                dpg.set_value("series_ex", [x_list, list(self.history['ex'])])
-                dpg.set_value("series_ey", [x_list, list(self.history['ey'])])
-                dpg.set_value("series_ez", [x_list, list(self.history['ez'])])
-                dpg.set_value("series_mx", [x_list, list(self.history['mx'])])
-                dpg.set_value("series_my", [x_list, list(self.history['my'])])
-                dpg.set_value("series_mz", [x_list, list(self.history['mz'])])
-            
+                
+                # Update ALL lines in a single, flat loop!
+                for var in self.tracked_vars:
+                    self.history[var].append(snap[var])
+                    dpg.set_value(f"series_{var}", [x_list, list(self.history[var])])
+                
+                #Update Trackball Orientation
+                endpoints = self.get_trackball_lines(
+                    [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']]
+                )
+                # Update the p2 (endpoint) of each line. p1 stays at [0,0] (the center)
+                dpg.configure_item("tb_x", p2=endpoints[0])
+                dpg.configure_item("tb_y", p2=endpoints[1])
+                dpg.configure_item("tb_z", p2=endpoints[2])
+                
+                #  UPDATE BATTERY DISPLAY
+                vbat = snap['vbat']
+                dpg.set_value("status_vbat", f"VBAT: {vbat:.2f} V")
+                
+                # Color code the battery (Assuming 1S LiPo: 4.2V max, 3.3V dead)
+                if vbat < 3.3:
+                    dpg.configure_item("status_vbat", color=(255, 50, 50)) # Red
+                elif vbat < 3.6:
+                    dpg.configure_item("status_vbat", color=(255, 200, 50)) # Yellow
+                else:
+                    dpg.configure_item("status_vbat", color=(50, 255, 50)) # Green
+
+                #  UPDATE STATE FLAGS
+                # ARMED FLAG
+                if snap['armed']:
+                    dpg.set_value("status_armed", "ARMED: TRUE")
+                    dpg.configure_item("status_armed", color=(255, 50, 50)) # Danger Red
+                else:
+                    dpg.set_value("status_armed", "ARMED: FALSE")
+                    dpg.configure_item("status_armed", color=(150, 150, 150)) # Safe Gray
+
+                # FLYING FLAG
+                if snap['flying']:
+                    dpg.set_value("status_flying", "FLYING: TRUE")
+                    dpg.configure_item("status_flying", color=(50, 255, 50)) # Green
+                else:
+                    dpg.set_value("status_flying", "FLYING: FALSE")
+                    dpg.configure_item("status_flying", color=(150, 150, 150))
+
+                # CRASHED FLAG
+                if snap['crashed']:
+                    dpg.set_value("status_crashed", "CRASHED: TRUE!")
+                    dpg.configure_item("status_crashed", color=(255, 0, 0)) # Bright Red
+                else:
+                    dpg.set_value("status_crashed", "CRASHED: FALSE")
+                    dpg.configure_item("status_crashed", color=(150, 150, 150))
+        
             # --- SCROLLING LOGIC (Runs every frame for smooth visuals) ---
             if self.time_data:
                 latest_t = self.time_data[-1]
@@ -127,13 +231,14 @@ class QuasarGUI:
                 if min_t < 0:
                     min_t = 0.0
                     
-                dpg.set_axis_limits(self.x_axis, min_t, latest_t)
+                dpg.set_axis_limits(self.master_x_axis, min_t, latest_t)
                 
-            # Render the frame (this will run at max FPS, but data only updates at 50Hz)
+            
             dpg.render_dearpygui_frame()
             
         dpg.destroy_context()
         
+
 
 def test_gui():
     # 1. Initialize Shared State
