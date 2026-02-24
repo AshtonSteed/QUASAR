@@ -69,6 +69,7 @@ class SystemState:
         with self.lock:
             self.motive_pose = pose
             self.motive_time = time.time()
+            self.time = time.time()
 
     # Callback/update for pose logging
     def pose_data_callback(self, timestamp, data, logconf):
@@ -81,6 +82,7 @@ class SystemState:
 
         #Quickly lock, update the shared state, and release
         with self.lock:
+            self.time = timestamp
             self.estimate_pose.x = x
             self.estimate_pose.y = y
             self.estimate_pose.z = z
@@ -107,6 +109,7 @@ class SystemState:
                 data['stateEstimateZ.rateYaw'] / 100.0
             )
         with self.lock:
+            self.time = timestamp
             self.linear_velocity = l_v
             self.linear_accel = l_a
             self.angular_rates = pqr
@@ -119,6 +122,7 @@ class SystemState:
             data['motor.m4'] / 65535.0
         )
         with self.lock:
+            self.time = timestamp
             self.motor_commands = motors
             
     def health_data_callback(self, timestamp, data, logconf):
@@ -133,6 +137,7 @@ class SystemState:
         is_crashed = (supervisor_info & 0b0000000010000000) > 0
         
         with self.lock:
+            self.time = timestamp
             self.battery_voltage = vbat
             self.armed = is_armed
             self.flying = is_flying
@@ -150,7 +155,7 @@ class SystemState:
         with self.lock:
             return {
                 # Timing
-                't': self.motive_time,
+                't': self.time,
                 
                 # Ground Truth (Motive)
                 'mx': self.motive_pose.x,
