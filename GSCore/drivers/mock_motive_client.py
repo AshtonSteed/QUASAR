@@ -22,6 +22,7 @@ def mock_motive_worker(pose_queue, system_state):
         x = 1.0 * math.cos(t * (2 * math.pi / 5.0))
         y = 1.0 * math.sin(t * (2 * math.pi / 5.0))
         z = 1.0 + 0.1 * math.sin(t * 2) # Slight hover bob
+        x, y, z = 0, 0, 0
         
         # Quaternions (Just flat for now)
         qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
@@ -31,7 +32,7 @@ def mock_motive_worker(pose_queue, system_state):
         pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0, True)
         # 2. Update STATE (For Logger/GUI)
         if system_state:
-            system_state.pose = pose
+            system_state.motive_pose = pose
             system_state.motive_time = time.time()
             
        
