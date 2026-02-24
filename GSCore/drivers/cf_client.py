@@ -215,10 +215,10 @@ class CrazyflieDriver:
             self.cf.log.add_config(health_log)
             
            # add callback functions from the shared logging state
-            pose_log.data_received_cb.add_callback(self.state.pose_data_callback)
-            dyn_log.data_received_cb.add_callback(self.state.dyn_data_callback)
-            motor_log.data_received_cb.add_callback(self.state.motor_data_callback)
-            health_log.data_received_cb.add_callback(self.state.health_data_callback)
+            pose_log.data_received_cb.add_callback(self.logging_state.pose_data_callback)
+            dyn_log.data_received_cb.add_callback(self.logging_state.dyn_data_callback)
+            motor_log.data_received_cb.add_callback(self.logging_state.motor_data_callback)
+            health_log.data_received_cb.add_callback(self.logging_state.health_data_callback)
             
             # 5. Start the logging
             pose_log.start()
@@ -229,7 +229,9 @@ class CrazyflieDriver:
             
         except KeyError as e:
             print(f"Could not find variable in TOC: {e}")
-        except AttributeError:
+        except AttributeError as e: # <--- Catch the actual error object
+            # Print the exact python error!
+            print(f"AttributeError triggered: {e}") 
             print("Could not add log config, bad configuration.")
     
    
@@ -244,9 +246,12 @@ class CrazyflieDriver:
             pose = self._extract_pose_from_queue()
             if pose and pose.valid:
                 # Send external position to CF
-                self.cf.extpos.send_extpose(
+                '''self.cf.extpos.send_extpose(
                     pose.x, pose.y, pose.z,
                     pose.qx, pose.qy, pose.qz, pose.qw
+                )'''
+                self.cf.extpos.send_extpos(
+                    pose.x, pose.y, pose.z,
                 )
             # 30Hz - 50Hz update rate is standard for Mocap
             time.sleep(0.01)
@@ -260,14 +265,27 @@ class CrazyflieDriver:
         """
         self.start_logging() # Start logging position data from CF
         self.cf.platform.send_arming_request(True)
+        time.sleep(1.0) # Wait for arming to take effect
+        print("Starting Maneuver...")
         
         i = 0
+        start_time = time.time()
+        duration_s = 30.0
+        while time.time() - start_time < duration_s:
+            # Send the raw setpoint to the attitude controller
+            self.cf.commander.send_setpoint(0, 0, 0, 20000)
+            
+            # Sleep for 50ms (20Hz update rate is plenty to keep it alive)
+            time.sleep(0.05)
         
-
-        with MotionCommander(self.scf) as mc:
+        # SAFETY CUTOFF: Instantly drop thrust to 0 when the duration ends
+        # to prevent the drone from flying away into the ceiling.
+        self.cf.commander.send_setpoint(0.0, 0.0, 0.0, 0)
+        print("Maneuver complete. Motors cut.")
+        '''with MotionCommander(self.scf) as mc:
             mc.up(0.5)
             time.sleep(2)
-            mc.stop()
+            mc.stop()'''
         
         
        
@@ -304,5 +322,5 @@ def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
         driver.stop()
     else:
         print("Connection failed.")
-    return driver
+    
     

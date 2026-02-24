@@ -22,7 +22,7 @@ def mock_motive_worker(pose_queue, system_state):
         x = 1.0 * math.cos(t * (2 * math.pi / 5.0))
         y = 1.0 * math.sin(t * (2 * math.pi / 5.0))
         z = 1.0 + 0.1 * math.sin(t * 2) # Slight hover bob
-        #x, y, z = 0, 0, 0
+        x, y, z = 0, 0, 0
         
         # Quaternions (Just flat for now)
         qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
