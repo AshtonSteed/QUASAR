@@ -43,7 +43,7 @@ class SystemState:
         
         # 1. KINEMATICS (Ground Truth)
         self.motive_pose = Pose()
-        self.motive_time = 0.0
+        self.time = 0.0
         
         # 2. KINEMATICS (Onboard Estimate & Setpoints)
         self.estimate_pose = Pose() # What the drone thinks its pose is

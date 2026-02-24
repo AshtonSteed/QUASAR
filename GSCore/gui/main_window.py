@@ -45,7 +45,7 @@ class QuasarGUI:
     def get_trackball_lines(self, quat, scale=50):
         rot = Rotation.from_quat(quat)
         rot_matrix = rot.as_matrix()
-        # 2. Define our base 3D unit vectors (X: Forward, Y: Left, Z: Up)
+        #Define our base 3D unit vectors (X: Forward, Y: Left, Z: Up)
         axes = np.array([
             [1, 0, 0], # X axis (Red)
             [0, 1, 0], # Y axis (Green)
@@ -53,7 +53,7 @@ class QuasarGUI:
         ])
         rotated_axes = axes @ rot_matrix.T
         
-            # Scale them up for the GUI, and negate the screen-Y because GUI Y points DOWN
+        # Scale them up for the GUI, set up for gui
         lines_2d = []
         for axis in rotated_axes:
             screen_x = axis[0] * scale
@@ -75,7 +75,7 @@ class QuasarGUI:
     def setup_gui(self):
         dpg.create_context()
         
-        with dpg.window(label="UAV Telemetry", width=1000, height=800):
+        with dpg.window(label="QUASAR Telemetry", width=1000, height=800):
             
             # ==========================================
             # 1. TOP DASHBOARD (Control Panel)
@@ -151,7 +151,7 @@ class QuasarGUI:
                             
                     dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
-        dpg.create_viewport(title='UAV Testbed', width=1050, height=850)
+        dpg.create_viewport(title='QUASAR Testbed', width=1050, height=850)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         
@@ -262,6 +262,11 @@ def test_gui():
     gui.setup_gui()
     gui.run() # This blocks and runs the while loop until you close the window
 
+def start_gui(shared_state, command_queue=None, crazyflie=None):
+    # Start the GUI on the main thread
+    gui = QuasarGUI(shared_state)
+    gui.setup_gui()
+    gui.run() # This blocks and runs the while loop until you close the window
 if __name__ == '__main__':
     # 1. Initialize Shared State
     shared_state = SystemState()

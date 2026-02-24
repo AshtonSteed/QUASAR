@@ -275,12 +275,12 @@ class CrazyflieDriver:
         
         
 
-def test_cf_connection(uri):
+def test_cf_connection(uri, shared_state=None):
     pose_queue = queue.Queue(maxsize=1)
-    shared_state = SystemState()
+    shared_state = SystemState() if shared_state is None else shared_state
     motive_client = start_motive_stream(pose_queue, shared_state)
     cflib.crtp.init_drivers()
-    driver = CrazyflieDriver(uri, pose_queue, None)
+    driver = CrazyflieDriver(uri, pose_queue, shared_state)
     if driver.connect():
         print("Connection successful!")
         driver.start()
@@ -288,3 +288,21 @@ def test_cf_connection(uri):
         driver.stop()
     else:
         print("Connection failed.")
+    return driver
+
+def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
+    pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
+    command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
+    shared_state = SystemState() if shared_state is None else shared_state
+    #motive_client = start_motive_stream(pose_queue, shared_state)
+    cflib.crtp.init_drivers()
+    driver = CrazyflieDriver(uri, pose_queue, command_queue, shared_state=shared_state)
+    if driver.connect():
+        print("Connection successful!")
+        driver.start()
+        time.sleep(10)  # Let it run for a bit
+        driver.stop()
+    else:
+        print("Connection failed.")
+    return driver
+    
