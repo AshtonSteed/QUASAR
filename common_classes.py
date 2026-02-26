@@ -69,7 +69,6 @@ class SystemState:
         """Called by the Motive/OptiTrack listener thread"""
         with self.lock:
             self.motive_pose = pose
-            self.motive_time = time.time()
             self.time = time.time()
 
     # Callback/update for pose logging
