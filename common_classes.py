@@ -24,8 +24,8 @@ class Pose:
             y = pos[1],      
             z = pos[2],      
             qx = rot[0],
-            qy = rot[2],     # Swapped/Negated based on axis rule
-            qz = rot[1],
+            qy = rot[1],     
+            qz = rot[2],
             qw = rot[3],
             error = err,
             valid = valid

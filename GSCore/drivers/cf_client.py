@@ -10,6 +10,7 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.crazyflie.log import LogConfig
 from cflib.utils.encoding import decompress_quaternion
+import numpy as np
 from GSCore.drivers.motive_client import start_motive_stream
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from common_classes import SystemState, Pose
@@ -121,7 +122,7 @@ class CrazyflieDriver:
         # Set the expected position error from Motive [mm]
         self.cf.param.set_value('locSrv.extPosStdDev', err)
         # Set the expected attitude error from Motive [degrees]
-        self.cf.param.set_value('locSrv.extQuatStdDev', 5 * err)
+        self.cf.param.set_value('locSrv.extQuatStdDev', 0.01)
         
         pose = self._extract_pose_from_queue()
         if pose is None:
@@ -130,10 +131,14 @@ class CrazyflieDriver:
         
         x, y, z = pose.x, pose.y, pose.z
         
+        # Calculate the initial yaw from the quaternion
+        first_yaw = np.arctan2(2*(pose.qw*pose.qz + pose.qx*pose.qy), 1 - 2*(pose.qx**2 + pose.qy**2))
+        
         
         self.cf.param.set_value('kalman.initialX', x)
         self.cf.param.set_value('kalman.initialY', y)
         self.cf.param.set_value('kalman.initialZ', z)
+        self.cf.param.set_value('kalman.initialYaw', first_yaw)
         
         self.cf.param.set_value('kalman.resetEstimation', '1')
         
@@ -164,6 +169,7 @@ class CrazyflieDriver:
         # Send latest pose data if it exists, otherwise do nothing
         pose = self._extract_pose_from_queue()
         if pose is None:
+            print("U OH")
             # Invalid position, do not update state estimation or commands
             return
         mx, my, mz, qx, qy, qz, qw = pose.x, pose.y, pose.z, pose.qx, pose.qy, pose.qz, pose.qw
@@ -175,7 +181,7 @@ class CrazyflieDriver:
     def start_logging(self):
         
         # Position Logging, High frequency logging of drone position and rotation from UAV estimator
-        pose_log = LogConfig(name='Pose', period_in_ms=15) # 67Hz, faster logging
+        pose_log = LogConfig(name='Pose', period_in_ms=30) # 67Hz, faster logging
 
         # Add all variables to log from CF parameter list
         pose_log.add_variable('stateEstimateZ.x', 'int16_t')
@@ -184,7 +190,7 @@ class CrazyflieDriver:
         pose_log.add_variable('stateEstimateZ.quat', 'uint32_t')
     
         # Dynamics Logging, Moderate frequency logging of velocity, acceleration, and angular rates from UAV estimator
-        dyn_log = LogConfig(name='Dynamics', period_in_ms=25) # 40Hz, moderate logging of estimated dynamics
+        dyn_log = LogConfig(name='Dynamics', period_in_ms=50) # 40Hz, moderate logging of estimated dynamics
         dyn_log.add_variable('stateEstimateZ.vx', 'int16_t')
         dyn_log.add_variable('stateEstimateZ.vy', 'int16_t')
         dyn_log.add_variable('stateEstimateZ.vz', 'int16_t')
@@ -196,14 +202,14 @@ class CrazyflieDriver:
         dyn_log.add_variable('stateEstimateZ.rateYaw', 'int16_t')
         
         # Motor logging, Moderate frequency logging of motor setpoints for control debugging
-        motor_log = LogConfig(name='Control', period_in_ms=25) # 40Hz, moderate logging of motor stepoints
+        motor_log = LogConfig(name='Control', period_in_ms=50) # 40Hz, moderate logging of motor stepoints
         motor_log.add_variable('motor.m1', 'uint16_t')
         motor_log.add_variable('motor.m2', 'uint16_t')
         motor_log.add_variable('motor.m3', 'uint16_t')
         motor_log.add_variable('motor.m4', 'uint16_t')
 
         # Health Logging, Low frequency logging of battery and UAV status (flying, crash, etc)
-        health_log = LogConfig(name='Health', period_in_ms=250) # 4Hz, low frequency logging of battery and UAV Status
+        health_log = LogConfig(name='Health', period_in_ms=500) # 4Hz, low frequency logging of battery and UAV Status
         health_log.add_variable('supervisor.info', 'uint16_t') # See CF docs for state codes
         health_log.add_variable('pm.vbatMV', 'uint16_t') # Battery voltage in mV
         
@@ -246,15 +252,15 @@ class CrazyflieDriver:
             pose = self._extract_pose_from_queue()
             if pose and pose.valid:
                 # Send external position to CF
-                '''self.cf.extpos.send_extpose(
-                    pose.x, pose.y, pose.z,
-                    pose.qx, pose.qy, pose.qz, pose.qw
-                )'''
+                #self.cf.extpos.send_extpose(
+                #    pose.x, pose.y, pose.z,
+                #    pose.qx, pose.qy, pose.qz, pose.qw
+                #)
                 self.cf.extpos.send_extpos(
                     pose.x, pose.y, pose.z,
                 )
             # 30Hz - 50Hz update rate is standard for Mocap
-            time.sleep(0.01)
+            time.sleep(0.03)
     # ==========================================
     # THE CONTROL WORKER
     # ==========================================
@@ -263,29 +269,70 @@ class CrazyflieDriver:
         """
         The main flight loop. Runs in background thread.
         """
-        self.start_logging() # Start logging position data from CF
-        self.cf.platform.send_arming_request(True)
-        time.sleep(1.0) # Wait for arming to take effect
-        print("Starting Maneuver...")
         
+        #self.cf.utils.reset_estimator() # Reset the onboard estimator to use the EKF with our external pose updates
+        self.cf.platform.send_arming_request(True)
+        time.sleep(5.0) # Wait for arming to take effect
+        print("Starting Maneuver...")
+        self.start_logging() # Start logging position data from CF
         i = 0
         start_time = time.time()
         duration_s = 30.0
-        while time.time() - start_time < duration_s:
-            # Send the raw setpoint to the attitude controller
-            self.cf.commander.send_setpoint(0, 0, 0, 20000)
-            
-            # Sleep for 50ms (20Hz update rate is plenty to keep it alive)
-            time.sleep(0.05)
+        time.sleep(3)
+        
+        #while time.time() - start_time < duration_s:
+        #    # Send the raw setpoint to the attitude controller
+        #    self.cf.commander.send_setpoint(0, 0, 0, 20000)
+        #    
+        #    # Sleep for 50ms (20Hz update rate is plenty to keep it alive)
+        #    time.sleep(0.1)
         
         # SAFETY CUTOFF: Instantly drop thrust to 0 when the duration ends
         # to prevent the drone from flying away into the ceiling.
-        self.cf.commander.send_setpoint(0.0, 0.0, 0.0, 0)
-        print("Maneuver complete. Motors cut.")
-        '''with MotionCommander(self.scf) as mc:
-            mc.up(0.5)
-            time.sleep(2)
-            mc.stop()'''
+        #self.cf.commander.send_setpoint(0.0, 0.0, 0.0, 0)
+       # 3. Grab our current Mocap position so we hover straight up, not diagonally
+       
+        pose = self._extract_pose_from_queue()
+        start_x = pose.x if (pose and pose.valid) else 0.0
+        start_y = pose.y if (pose and pose.valid) else 0.0
+        
+        target_height = 0.5  # meters
+        hover_duration = 5.0 # seconds
+        
+        # --- TAKEOFF ---
+        print(f"Taking off to {target_height}m...")
+        # takeoff(absolute_height_m, duration_s)
+        self.cf.high_level_commander.takeoff(target_height, 2.0)
+        
+        # wait for maneuver to happen
+        time.sleep(2.0) 
+
+        # --- HOVER ---
+        print(f"Hovering for {hover_duration} seconds...")
+        # Force the drone to actively hold its starting X/Y to prevent drift
+        # go_to(x, y, z, yaw, duration_s, relative=False)
+        self.cf.high_level_commander.go_to(start_x, start_y, target_height, 0, hover_duration, relative=False)
+        time.sleep(hover_duration)
+        
+        self.cf.high_level_commander.go_to(0.3, 0.0, 0, math.pi, 5.0, relative=True)
+        time.sleep(5.0)
+        
+        self.cf.high_level_commander.go_to(0.3, -0.3, 0, math.pi, 2.5, relative=True)
+        time.sleep(2.5)
+        
+        self.cf.high_level_commander.go_to(0.0, 0.0, 0, 0,30.0, relative=True)
+        time.sleep(30)
+
+        # --- LAND ---
+        print("Landing...")
+        # land(absolute_height_m, duration_s)
+        self.cf.high_level_commander.land(0.0, 2.0, yaw=None)
+        time.sleep(2.0)
+        
+        # 4. Cut motors completely for safety
+        self.cf.high_level_commander.stop()
+        print("Flight maneuver complete.")
+        self.stop()
         
         
        
@@ -302,7 +349,7 @@ def test_cf_connection(uri, shared_state=None):
     if driver.connect():
         print("Connection successful!")
         driver.start()
-        time.sleep(10)  # Let it run for a bit
+        time.sleep(30)  # Let it run for a bit
         driver.stop()
     else:
         print("Connection failed.")
@@ -318,8 +365,8 @@ def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
     if driver.connect():
         print("Connection successful!")
         driver.start()
-        time.sleep(10)  # Let it run for a bit
-        driver.stop()
+        #time.sleep(60)  # Let it run for a bit
+        #driver.stop()
     else:
         print("Connection failed.")
     

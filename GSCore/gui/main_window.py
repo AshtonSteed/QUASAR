@@ -127,6 +127,7 @@ class QuasarGUI:
                                     self.master_x_axis = x_axis 
                                     
                                 y_axis = dpg.add_plot_axis(dpg.mvYAxis, label=chart_name)
+                                dpg.set_axis_limits_auto(y_axis)
                                 
                                 for group_name, variables in groups.items():
                                     for var in variables:
@@ -152,6 +153,7 @@ class QuasarGUI:
                     dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
         dpg.create_viewport(title='QUASAR Testbed', width=1050, height=850)
+
         dpg.setup_dearpygui()
         dpg.show_viewport()
         

@@ -15,7 +15,7 @@ def start_testbed():
     command_queue = queue.Queue(maxsize=1)
     shared_state = SystemState()
     # Replace with real motive stream when wanted
-    motive_client = start_mock_stream(pose_queue, shared_state)
+    motive_client = start_motive_stream(pose_queue, shared_state)
     
     uav_thread = threading.Thread(
         target=connect_to_uav, 
