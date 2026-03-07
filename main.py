@@ -6,7 +6,7 @@ from GSCore.drivers.motive_client import print_motive_data, start_motive_stream,
 from GSCore.drivers.mock_motive_client import print_mock_data, start_mock_stream
 from GSCore.gui.main_window import test_gui, start_gui
 from common_classes import SystemState, Pose
-from GSCore.data.logger import logger_worker
+from GSCore.data.logger import logger_worker    
 from GSCore.drivers.cf_client import connect_to_uav, test_cf_connection
 
 def start_testbed():
@@ -19,7 +19,7 @@ def start_testbed():
     
     uav_thread = threading.Thread(
         target=connect_to_uav, 
-        args=("radio://0/80/2M",), # Positional arguments go here (must be a tuple!)
+        args=("radio://0/110/1M",), # Positional arguments go here (must be a tuple!)
         kwargs={                   # Keyword arguments go here
             "pose_queue": pose_queue, 
             "command_queue": command_queue, 

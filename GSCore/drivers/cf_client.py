@@ -84,7 +84,7 @@ class CrazyflieDriver:
     def stop(self):
         """Stops the drone and disconnects"""
         self.running = False
-        if self.control_thread:
+        if self.control_thread and self.control_thread is not threading.current_thread():
             self.control_thread.join()
         
         # Safe disconnect
@@ -314,21 +314,21 @@ class CrazyflieDriver:
         self.cf.high_level_commander.go_to(start_x, start_y, target_height, 0, hover_duration, relative=False)
         time.sleep(hover_duration)
         
-        self.cf.high_level_commander.go_to(0.3, 0.0, 0, math.pi, 5.0, relative=True)
-        time.sleep(5.0)
+        #self.cf.high_level_commander.go_to(0.3 + start_x, start_y, 1.5* target_height, 0, 5.0, relative=False)
+        #time.sleep(5.0)
         
-        self.cf.high_level_commander.go_to(0.3, -0.3, 0, math.pi, 2.5, relative=True)
-        time.sleep(2.5)
+        #self.cf.high_level_commander.go_to(-0.3 + start_x, start_y, 1.5* target_height, 0, 10.0, relative=False)
+        #time.sleep(10.0)
         
-        self.cf.high_level_commander.go_to(0.0, 0.0, 0, 0,30.0, relative=True)
-        time.sleep(30)
+        #self.cf.high_level_commander.go_to(0.0, 0.0, 0, 0,10.0, relative=True)
+        #time.sleep(10)
 
         # --- LAND ---
         print("Landing...")
         # land(absolute_height_m, duration_s)
         self.cf.high_level_commander.land(0.0, 2.0, yaw=None)
         time.sleep(2.0)
-        
+
         # 4. Cut motors completely for safety
         self.cf.high_level_commander.stop()
         print("Flight maneuver complete.")

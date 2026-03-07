@@ -104,6 +104,7 @@ class QuasarGUI:
                 dpg.add_text("ARMED: FALSE", tag="status_armed", color=(150, 150, 150))
                 dpg.add_text("FLYING: FALSE", tag="status_flying", color=(150, 150, 150))
                 dpg.add_text("CRASHED: FALSE", tag="status_crashed", color=(150, 150, 150))
+                dpg.add_text("LOCKED: FALSE", tag="status_locked", color=(150, 150, 150))
                 
             dpg.add_spacer(height=10) 
             
@@ -224,6 +225,13 @@ class QuasarGUI:
                 else:
                     dpg.set_value("status_crashed", "CRASHED: FALSE")
                     dpg.configure_item("status_crashed", color=(150, 150, 150))
+                    
+                if snap['locked']:
+                    dpg.set_value("status_locked", "LOCKED: TRUE")
+                    dpg.configure_item("status_locked", color=(255, 0, 0)) # Bright Red
+                else:
+                    dpg.set_value("status_locked", "LOCKED: FALSE")
+                    dpg.configure_item("status_locked", color=(150, 150, 150))
         
             # --- SCROLLING LOGIC (Runs every frame for smooth visuals) ---
             if self.time_data:

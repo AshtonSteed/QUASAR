@@ -13,7 +13,7 @@ from common_classes import SystemState, Pose
 # --- Motive (NatNet) Settings ---
 MOTIVE_SERVER_IP = "127.0.0.1"  # LocalHost IP
 RIGID_BODY_ID = 1             #   The ID the UAV in Motive  
-N = 3  # Number of markers on the rigid body
+N = 4  # Number of markers on the rigid body
 
 
 # Worker thread function for printing pose data
