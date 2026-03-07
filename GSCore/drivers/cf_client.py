@@ -44,6 +44,9 @@ class CrazyflieDriver:
         self.running = False
         self.control_thread = None
         self.update_thread = None
+        
+        #Kalman Filter Variance Storage
+        self._variance = {'x': None, 'y': None, 'z': None}
 
     
     def connect(self):
@@ -201,6 +204,8 @@ class CrazyflieDriver:
         dyn_log.add_variable('stateEstimateZ.ratePitch', 'int16_t')
         dyn_log.add_variable('stateEstimateZ.rateYaw', 'int16_t')
         
+        
+        
         # Motor logging, Moderate frequency logging of motor setpoints for control debugging
         motor_log = LogConfig(name='Control', period_in_ms=50) # 40Hz, moderate logging of motor stepoints
         motor_log.add_variable('motor.m1', 'uint16_t')
@@ -212,6 +217,12 @@ class CrazyflieDriver:
         health_log = LogConfig(name='Health', period_in_ms=500) # 4Hz, low frequency logging of battery and UAV Status
         health_log.add_variable('supervisor.info', 'uint16_t') # See CF docs for state codes
         health_log.add_variable('pm.vbatMV', 'uint16_t') # Battery voltage in mV
+        
+        # Kalman Filter convergence logging
+        kal_log = LogConfig(name='KalmanVar', period_in_ms=100)
+        kal_log.add_variable('kalman.varPX', 'float')
+        kal_log.add_variable('kalman.varPY', 'float')
+        kal_log.add_variable('kalman.varPZ', 'float')
         
         # 3. Add the configuration to the Crazyflie
         try:
@@ -225,6 +236,8 @@ class CrazyflieDriver:
             dyn_log.data_received_cb.add_callback(self.logging_state.dyn_data_callback)
             motor_log.data_received_cb.add_callback(self.logging_state.motor_data_callback)
             health_log.data_received_cb.add_callback(self.logging_state.health_data_callback)
+            kal_log.data_received_cb.add_callback(self._kalman_log_callback)
+            
             
             # 5. Start the logging
             pose_log.start()
@@ -240,7 +253,11 @@ class CrazyflieDriver:
             print(f"AttributeError triggered: {e}") 
             print("Could not add log config, bad configuration.")
     
-   
+    def _kalman_log_callback(self, timestamp, data, logconf):
+        """Automatically updates the class variables in the background."""
+        self._variance['x'] = data['kalman.varPX']
+        self._variance['y'] = data['kalman.varPY']
+        self._variance['z'] = data['kalman.varPZ']
     
     def _pose_sender_loop(self):
         """
@@ -270,11 +287,11 @@ class CrazyflieDriver:
         The main flight loop. Runs in background thread.
         """
         
-        #self.cf.utils.reset_estimator() # Reset the onboard estimator to use the EKF with our external pose updates
         self.cf.platform.send_arming_request(True)
         time.sleep(5.0) # Wait for arming to take effect
-        print("Starting Maneuver...")
         self.start_logging() # Start logging position data from CF
+        print("Commands Ready")
+        
         i = 0
         start_time = time.time()
         duration_s = 30.0
@@ -357,7 +374,7 @@ def test_cf_connection(uri, shared_state=None):
 
 def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
     pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
-    command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
+    #command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
     shared_state = SystemState() if shared_state is None else shared_state
     #motive_client = start_motive_stream(pose_queue, shared_state)
     cflib.crtp.init_drivers()
