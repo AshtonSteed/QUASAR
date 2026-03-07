@@ -8,11 +8,12 @@ from GSCore.gui.main_window import test_gui, start_gui
 from common_classes import SystemState, Pose
 from GSCore.data.logger import logger_worker    
 from GSCore.drivers.cf_client import connect_to_uav, test_cf_connection
+from GSCore.core.commands import CommandQueue
 
 def start_testbed():
     #test_gui()
     pose_queue = queue.Queue(maxsize=1)
-    command_queue = queue.Queue(maxsize=1)
+    command_queue = CommandQueue()
     shared_state = SystemState()
     # Replace with real motive stream when wanted
     motive_client = start_motive_stream(pose_queue, shared_state)

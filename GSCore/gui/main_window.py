@@ -9,12 +9,14 @@ import math, time, threading
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from GSCore.core.commands import DroneCmd, DroneCommand
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from common_classes import SystemState
 
 class QuasarGUI:
-    def __init__(self, shared_state):
+    def __init__(self, shared_state, command_queue=None):
         self.state = shared_state
+        self.cmd_queue = command_queue
         self.max_points = 500
         self.time_data = deque(maxlen=self.max_points)
         
@@ -71,6 +73,32 @@ class QuasarGUI:
             # Optional failsafe: check if the item exists before configuring it
             if dpg.does_item_exist(tag): 
                 dpg.configure_item(tag, show=is_checked)
+                
+    # ==========================================
+    # GUI Button Callbacks for Commands
+    # ==========================================
+    def cb_takeoff(self):
+        print("takeoff 1")
+        if self.cmd_queue:
+            print("takeoff 2")
+            self.cmd_queue.takeoff(height=1.0, duration=2.0)
+            
+    def cb_land(self):
+        if self.cmd_queue:
+            self.cmd_queue.land(height=0.0, duration=2.0)
+
+    def cb_emergency_stop(self):
+        if self.cmd_queue:
+            self.cmd_queue.emergency_stop()
+
+    def cb_goto(self):
+        if self.cmd_queue:
+            # Pull the live float values from the DPG input boxes
+            tgt_x = dpg.get_value("input_goto_x")
+            tgt_y = dpg.get_value("input_goto_y")
+            tgt_z = dpg.get_value("input_goto_z")
+            tgt_duration = dpg.get_value("input_goto_time")
+            self.cmd_queue.goto(tgt_x, tgt_y, tgt_z, yaw=0.0, duration=tgt_duration)
     
     def setup_gui(self):
         dpg.create_context()
@@ -107,6 +135,49 @@ class QuasarGUI:
                 dpg.add_text("LOCKED: FALSE", tag="status_locked", color=(150, 150, 150))
                 
             dpg.add_spacer(height=10) 
+            dpg.add_separator()
+            
+            
+            # ==========================================
+            # 2.5 COMMAND & CONTROL PANEL
+            # ==========================================
+            with dpg.group(horizontal=True):
+                # Immediate Actions, land, takeoff, shutdown
+                with dpg.group():
+                    dpg.add_text("Flight Controls", color=(200, 200, 200))
+                    with dpg.group(horizontal=True):
+                        
+                        dpg.add_button(label="TAKEOFF", width=100, height=40, callback=self.cb_takeoff)
+                        dpg.add_button(label="LAND", width=100, height=40, callback=self.cb_land)
+                        dpg.add_button(label="EMERGENCY STOP", width=150, height=40, callback=self.cb_emergency_stop)
+                        
+                        # Bind a theme specifically to the Kill Switch to make it bright red
+                        with dpg.theme() as kill_theme:
+                            with dpg.theme_component(dpg.mvButton):
+                                dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 40, 40))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (255, 50, 50))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (150, 30, 30))
+                        dpg.bind_item_theme(dpg.last_item(), kill_theme)
+
+                dpg.add_spacer(width=30)
+
+                # 2. GoTo Target Inputs
+                with dpg.group():
+                    dpg.add_text("High-Level Trajectory Command", color=(200, 200, 200))
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("X:")
+                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=60, step=0.1)
+                        dpg.add_text("Y:")
+                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=60, step=0.1)
+                        dpg.add_text("Z:")
+                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=60, step=0.1)
+                        dpg.add_text("Time(s):")
+                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=60, step=0.5)
+                        dpg.add_spacer(width=10)
+                        dpg.add_button(label="SEND GOTO", width=100, callback=self.cb_goto)
+                        
+            dpg.add_separator()
+            dpg.add_spacer(height=10)
             
             # ==========================================
             # 3. BOTTOM SECTION: PLOTS & TRACKBALL
@@ -274,7 +345,7 @@ def test_gui():
 
 def start_gui(shared_state, command_queue=None, crazyflie=None):
     # Start the GUI on the main thread
-    gui = QuasarGUI(shared_state)
+    gui = QuasarGUI(shared_state, command_queue=command_queue)
     gui.setup_gui()
     gui.run() # This blocks and runs the while loop until you close the window
 if __name__ == '__main__':

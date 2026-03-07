@@ -78,10 +78,11 @@ class CrazyflieDriver:
     
         self.running = True
         self._arm_kalman()
-        self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
-        self.control_thread.start()
         self.update_thread = threading.Thread(target=self._pose_sender_loop, daemon=True)
         self.update_thread.start() # Start the thread that continuously sends pose updates to the CF
+        self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
+        self.control_thread.start()
+        
         print("Control loop started.")
 
     def stop(self):
@@ -230,6 +231,7 @@ class CrazyflieDriver:
             self.cf.log.add_config(dyn_log)
             self.cf.log.add_config(motor_log)
             self.cf.log.add_config(health_log)
+            self.cf.log.add_config(kal_log)
             
            # add callback functions from the shared logging state
             pose_log.data_received_cb.add_callback(self.logging_state.pose_data_callback)
@@ -244,6 +246,7 @@ class CrazyflieDriver:
             dyn_log.start()
             motor_log.start()
             health_log.start()
+            kal_log.start()
             print("Logging started!")
             
         except KeyError as e:
@@ -269,19 +272,77 @@ class CrazyflieDriver:
             pose = self._extract_pose_from_queue()
             if pose and pose.valid:
                 # Send external position to CF
-                #self.cf.extpos.send_extpose(
-                #    pose.x, pose.y, pose.z,
-                #    pose.qx, pose.qy, pose.qz, pose.qw
-                #)
-                self.cf.extpos.send_extpos(
+                self.cf.extpos.send_extpose(
                     pose.x, pose.y, pose.z,
+                    pose.qx, pose.qy, pose.qz, pose.qw
                 )
+                #self.cf.extpos.send_extpos(
+                #    pose.x, pose.y, pose.z,
+                #)
             # 30Hz - 50Hz update rate is standard for Mocap
             time.sleep(0.03)
     # ==========================================
     # THE CONTROL WORKER
     # ==========================================
 
+    def _control_loop(self):
+        """
+        The main flight loop. Runs in background thread.
+        """
+        
+        self.cf.platform.send_arming_request(True)
+        time.sleep(5.0) # Wait for arming to take effect
+        self.start_logging() # Start logging position data from CF
+        print("Commands Ready")
+        
+        i = 0
+        start_time = time.time()
+        duration_s = 30.0
+        
+        
+        self.command_queue.run(self)
+        
+        self.cf.high_level_commander.stop()
+        self.stop()
+        
+        
+       
+        
+        
+        
+
+def test_cf_connection(uri, shared_state=None):
+    pose_queue = queue.Queue(maxsize=1)
+    shared_state = SystemState() if shared_state is None else shared_state
+    motive_client = start_motive_stream(pose_queue, shared_state)
+    cflib.crtp.init_drivers()
+    driver = CrazyflieDriver(uri, pose_queue, shared_state)
+    if driver.connect():
+        print("Connection successful!")
+        driver.start()
+        time.sleep(30)  # Let it run for a bit
+        driver.stop()
+    else:
+        print("Connection failed.")
+    return driver
+
+def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
+    pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
+    #command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
+    shared_state = SystemState() if shared_state is None else shared_state
+    #motive_client = start_motive_stream(pose_queue, shared_state)
+    cflib.crtp.init_drivers()
+    driver = CrazyflieDriver(uri, pose_queue, command_queue, shared_state=shared_state)
+    if driver.connect():
+        print("Connection successful!")
+        driver.start()
+        #time.sleep(60)  # Let it run for a bit
+        #driver.stop()
+    else:
+        print("Connection failed.")
+    
+    
+    '''
     def _control_loop(self):
         """
         The main flight loop. Runs in background thread.
@@ -349,42 +410,5 @@ class CrazyflieDriver:
         # 4. Cut motors completely for safety
         self.cf.high_level_commander.stop()
         print("Flight maneuver complete.")
-        self.stop()
-        
-        
-       
-        
-        
-        
-
-def test_cf_connection(uri, shared_state=None):
-    pose_queue = queue.Queue(maxsize=1)
-    shared_state = SystemState() if shared_state is None else shared_state
-    motive_client = start_motive_stream(pose_queue, shared_state)
-    cflib.crtp.init_drivers()
-    driver = CrazyflieDriver(uri, pose_queue, shared_state)
-    if driver.connect():
-        print("Connection successful!")
-        driver.start()
-        time.sleep(30)  # Let it run for a bit
-        driver.stop()
-    else:
-        print("Connection failed.")
-    return driver
-
-def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
-    pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
-    #command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
-    shared_state = SystemState() if shared_state is None else shared_state
-    #motive_client = start_motive_stream(pose_queue, shared_state)
-    cflib.crtp.init_drivers()
-    driver = CrazyflieDriver(uri, pose_queue, command_queue, shared_state=shared_state)
-    if driver.connect():
-        print("Connection successful!")
-        driver.start()
-        #time.sleep(60)  # Let it run for a bit
-        #driver.stop()
-    else:
-        print("Connection failed.")
-    
+        self.stop()'''
     
