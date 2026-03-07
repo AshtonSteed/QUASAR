@@ -103,7 +103,7 @@ class QuasarGUI:
     def setup_gui(self):
         dpg.create_context()
         
-        with dpg.window(label="QUASAR Telemetry", width=1000, height=800):
+        with dpg.window(label="QUASAR Telemetry", width=1200, height=800):
             
             # ==========================================
             # 1. TOP DASHBOARD (Control Panel)
@@ -166,13 +166,13 @@ class QuasarGUI:
                     dpg.add_text("High-Level Trajectory Command", color=(200, 200, 200))
                     with dpg.group(horizontal=True):
                         dpg.add_text("X:")
-                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=60, step=0.1)
+                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=120, step=0.1)
                         dpg.add_text("Y:")
-                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=60, step=0.1)
+                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=120, step=0.1)
                         dpg.add_text("Z:")
-                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=60, step=0.1)
+                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=120, step=0.1)
                         dpg.add_text("Time(s):")
-                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=60, step=0.5)
+                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=120, step=0.5)
                         dpg.add_spacer(width=10)
                         dpg.add_button(label="SEND GOTO", width=100, callback=self.cb_goto)
                         
@@ -224,7 +224,7 @@ class QuasarGUI:
                             
                     dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
-        dpg.create_viewport(title='QUASAR Testbed', width=1050, height=850)
+        dpg.create_viewport(title='QUASAR Testbed', width=1250, height=850)
 
         dpg.setup_dearpygui()
         dpg.show_viewport()

@@ -55,6 +55,8 @@ class CommandQueue: # Removed empty parenthesis
             elapsed = time.time() - loop_start
             time.sleep(max(0.0, 0.02 - elapsed))
 
+
+    # TODO: Ensure that UAV hovers in place after ALL commands
     def _check_queue(self, cf_manager):
         """Non-blocking check for GUI commands"""
         # Removed the inner while loop. The main loop handles the spinning.
@@ -72,7 +74,7 @@ class CommandQueue: # Removed empty parenthesis
                     time.sleep(0.5)
                     cf_manager.cf.high_level_commander.takeoff(cmd.height, cmd.duration, yaw=None)
                     self.mode = "HL_BUSY"
-                    self._hl_end_time = time.time() + cmd.duration
+                    self._hl_end_time = time.time() + 2 * cmd.duration
                     
                 elif cmd.action == DroneCmd.LAND:
                     cf_manager.cf.high_level_commander.land(cmd.height, cmd.duration)
