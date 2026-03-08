@@ -220,11 +220,20 @@ class CrazyflieDriver:
         health_log.add_variable('pm.vbatMV', 'uint16_t') # Battery voltage in mV
         
         # Kalman Filter convergence logging
-        kal_log = LogConfig(name='KalmanVar', period_in_ms=100)
+        kal_log = LogConfig(name='KalmanVar', period_in_ms=200)
         kal_log.add_variable('kalman.varPX', 'float')
         kal_log.add_variable('kalman.varPY', 'float')
         kal_log.add_variable('kalman.varPZ', 'float')
         
+        #Control Logging, logs x and v setpoints 
+        ctrl_log = LogConfig(name='Control', period_in_ms=50)
+        ctrl_log.add_variable('ctrltarget.x', 'float')
+        ctrl_log.add_variable('ctrltarget.y', 'float')
+        ctrl_log.add_variable('ctrltarget.z', 'float')
+        ctrl_log.add_variable('ctrltarget.vx', 'float')
+        ctrl_log.add_variable('ctrltarget.vy', 'float')
+        ctrl_log.add_variable('ctrltarget.vz', 'float')
+
         # 3. Add the configuration to the Crazyflie
         try:
             self.cf.log.add_config(pose_log)
@@ -232,6 +241,7 @@ class CrazyflieDriver:
             self.cf.log.add_config(motor_log)
             self.cf.log.add_config(health_log)
             self.cf.log.add_config(kal_log)
+            self.cf.log.add_config(ctrl_log)
             
            # add callback functions from the shared logging state
             pose_log.data_received_cb.add_callback(self.logging_state.pose_data_callback)
@@ -239,6 +249,7 @@ class CrazyflieDriver:
             motor_log.data_received_cb.add_callback(self.logging_state.motor_data_callback)
             health_log.data_received_cb.add_callback(self.logging_state.health_data_callback)
             kal_log.data_received_cb.add_callback(self._kalman_log_callback)
+            ctrl_log.data_received_cb.add_callback(self.logging_state.control_data_callback)
             
             
             # 5. Start the logging
@@ -247,6 +258,7 @@ class CrazyflieDriver:
             motor_log.start()
             health_log.start()
             kal_log.start()
+            ctrl_log.start()
             print("Logging started!")
             
         except KeyError as e:

@@ -145,6 +145,22 @@ class SystemState:
             self.locked = is_locked
             self.crashed = is_crashed
         
+    def control_data_callback(self, timestamp, data, logconf):
+        sx = data['ctrltarget.x']
+        sy = data['ctrltarget.y']
+        sz = data['ctrltarget.z']
+        
+        # Velocity as well, TODO
+        svx = data['ctrltarget.vx']
+        svy = data['ctrltarget.vy']
+        svz = data['ctrltarget.vz']
+        
+        with self.lock:
+            self.time = timestamp
+            self.target_setpoint.x = sx
+            self.target_setpoint.y = sy
+            self.target_setpoint.z = sz
+        
     
             
     def get_snapshot(self):
