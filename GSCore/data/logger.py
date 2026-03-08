@@ -1,32 +1,60 @@
-# Not sure about this yet, might this file for explicit seperate thread to log and save data
-import csv
+import threading
 import time
+import csv
+from datetime import datetime
 
-def logger_worker(state, stop_event, filename="flight_log.csv"):
-    print(f"Logging to {filename}...")
-    tic = time.time()
-    
-    with open(filename, 'w', newline='') as f:
-        writer = csv.writer(f)
+#Class to handle logging as called from GUI
+class FlightLogger:
+    def __init__(self, shared_state):
+        self.state = shared_state
+        self.is_logging = False
+        self._log_thread = None
+
+    def toggle_logging(self):
+        """Called by the GUI button to flip the state."""
+        if self.is_logging:
+            self.stop()
+        else:
+            self.start()
+
+    def start(self):
+        if self.is_logging: return
         
-        writer.writerow(['Timestamp', 'Motive_X', 'Motive_Y', 'Motive_Z, Error'])
+        self.is_logging = True
+        self._log_thread = threading.Thread(target=self._log_loop, daemon=True)
+        self._log_thread.start()
+
+    def stop(self):
+        self.is_logging = False
+        if self._log_thread:
+            self._log_thread.join()
+
+    def _log_loop(self):
+        # Generate a unique filename: e.g., flight_log_20260308_153000.csv
+        filename = f"flight_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        print(f"Started recording telemetry to {filename}")
         
-        while not stop_event.is_set():
-            # 1. Get atomic snapshot of the entire system
-            data = state.get_snapshot()
-            
-            # 2. Write to disk
-            writer.writerow([
-                data['t'], 
-                data['mx'], data['my'], data['mz'], data['error'], 
-            ])
-            
-            # 3. Flush occasionally (optional, safer for crashes)
-            # f.flush() 
-            
-           
-            time.sleep(0.05)
-            
-    print("Logging complete.")
+        # Grab one snapshot just to extract the dictionary keys for the CSV headers
+        initial_snap = self.state.get_snapshot()
+        fieldnames = list(initial_snap.keys())
 
+        # Open the file and keep it open for the duration of the flight
+        with open(filename, mode='w', newline='') as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
 
+            while self.is_logging:
+                loop_start = time.time()
+                
+                # Grab fresh data from your lock-protected state
+                snap = self.state.get_snapshot()
+                writer.writerow(snap)
+                
+                # Force the OS to write to disk occasionally so data isn't lost in a crash
+                csv_file.flush() 
+
+                # Maintain 100Hz logging rate
+                elapsed = time.time() - loop_start
+                time.sleep(max(0.0, 0.01 - elapsed))
+                
+        print("Stopped recording. File saved successfully.")

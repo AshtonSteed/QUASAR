@@ -47,7 +47,7 @@ class SystemState:
         
         # 2. KINEMATICS (Onboard Estimate & Setpoints)
         self.estimate_pose = Pose() # What the drone thinks its pose is
-        self.target_setpoint = (0.0, 0.0, 0.0) # Commanded X, Y, Z (Temp for now)
+        self.target_setpoint = Pose() # Commanded Pose, might need expanded for traectories
         
         # 3. DYNAMICS & IMU
         self.angular_rates = (0.0, 0.0, 0.0) # p, q, r (Gyro/estimator)
@@ -183,9 +183,9 @@ class SystemState:
                 'az': self.linear_accel[2],
                 
                 # Setpoint
-                'sx': self.target_setpoint[0],
-                'sy': self.target_setpoint[1],
-                'sz': self.target_setpoint[2],
+                'sx': self.target_setpoint.x,
+                'sy': self.target_setpoint.y,
+                'sz': self.target_setpoint.z,
                 
                 # Dynamics
                 'p': self.angular_rates[0],

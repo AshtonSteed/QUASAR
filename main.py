@@ -5,8 +5,7 @@ import time
 from GSCore.drivers.motive_client import print_motive_data, start_motive_stream, start_print_thread
 from GSCore.drivers.mock_motive_client import print_mock_data, start_mock_stream
 from GSCore.gui.main_window import test_gui, start_gui
-from common_classes import SystemState, Pose
-from GSCore.data.logger import logger_worker    
+from common_classes import SystemState, Pose   
 from GSCore.drivers.cf_client import connect_to_uav, test_cf_connection
 from GSCore.core.commands import CommandQueue
 
@@ -16,7 +15,7 @@ def start_testbed():
     command_queue = CommandQueue()
     shared_state = SystemState()
     # Replace with real motive stream when wanted
-    motive_client = start_motive_stream(pose_queue, shared_state)
+    motive_client = start_mock_stream(pose_queue, shared_state)
     
     uav_thread = threading.Thread(
         target=connect_to_uav, 

@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
 from GSCore.drivers.mock_motive_client import start_mock_stream
+from GSCore.data.logger import FlightLogger
 from common_classes import SystemState
 
 class QuasarGUI:
@@ -19,6 +20,7 @@ class QuasarGUI:
         self.cmd_queue = command_queue
         self.max_points = 500
         self.time_data = deque(maxlen=self.max_points)
+        self.logger = FlightLogger(self.state)
         
         
         # Definition of all charted variables, their groups, and plots
@@ -99,9 +101,28 @@ class QuasarGUI:
             tgt_z = dpg.get_value("input_goto_z")
             tgt_duration = dpg.get_value("input_goto_time")
             self.cmd_queue.goto(tgt_x, tgt_y, tgt_z, yaw=0.0, duration=tgt_duration)
+        
+    def cb_log(self):
+        print("Logging command received!")
+        self.logger.toggle_logging() # Start or stop logging
+        # Update the GUI visuals based on the new state
+        if self.logger.is_logging:
+            dpg.configure_item("btn_record", label="STOP RECORDING")
+            dpg.bind_item_theme("btn_record", "theme_recording_active")
+        else:
+            dpg.configure_item("btn_record", label="START RECORDING")
+            dpg.bind_item_theme("btn_record", "theme_recording_idle")
     
     def setup_gui(self):
         dpg.create_context()
+        
+        with dpg.theme(tag="theme_recording_idle"):
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (100, 100, 100)) # Gray
+                
+        with dpg.theme(tag="theme_recording_active"):
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 40, 40)) # Bright Red
         
         with dpg.window(label="QUASAR Telemetry", width=1200, height=800):
             
@@ -133,20 +154,27 @@ class QuasarGUI:
                 dpg.add_text("FLYING: FALSE", tag="status_flying", color=(150, 150, 150))
                 dpg.add_text("CRASHED: FALSE", tag="status_crashed", color=(150, 150, 150))
                 dpg.add_text("LOCKED: FALSE", tag="status_locked", color=(150, 150, 150))
+                dpg.add_button(
+                            label="START RECORDING", 
+                                width=150, 
+                                height=40, 
+                                tag="btn_record", 
+                                callback=self.cb_log
+                            )
+                dpg.bind_item_theme("btn_record", "theme_recording_idle")
                 
             dpg.add_spacer(height=10) 
             dpg.add_separator()
             
             
             # ==========================================
-            # 2.5 COMMAND & CONTROL PANEL
+            #  COMMAND & CONTROL PANEL
             # ==========================================
             with dpg.group(horizontal=True):
                 # Immediate Actions, land, takeoff, shutdown
                 with dpg.group():
                     dpg.add_text("Flight Controls", color=(200, 200, 200))
                     with dpg.group(horizontal=True):
-                        
                         dpg.add_button(label="TAKEOFF", width=100, height=40, callback=self.cb_takeoff)
                         dpg.add_button(label="LAND", width=100, height=40, callback=self.cb_land)
                         dpg.add_button(label="EMERGENCY STOP", width=150, height=40, callback=self.cb_emergency_stop)
@@ -158,10 +186,11 @@ class QuasarGUI:
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (255, 50, 50))
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (150, 30, 30))
                         dpg.bind_item_theme(dpg.last_item(), kill_theme)
+                    
 
                 dpg.add_spacer(width=30)
 
-                # 2. GoTo Target Inputs
+                # GoTo Target Inputs
                 with dpg.group():
                     dpg.add_text("High-Level Trajectory Command", color=(200, 200, 200))
                     with dpg.group(horizontal=True):
@@ -180,7 +209,7 @@ class QuasarGUI:
             dpg.add_spacer(height=10)
             
             # ==========================================
-            # 3. BOTTOM SECTION: PLOTS & TRACKBALL
+            # BOTTOM SECTION: PLOTS & TRACKBALL
             # ==========================================
             with dpg.group(horizontal=True):
                 
