@@ -68,7 +68,10 @@ def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = Non
                     try:
                         pose_queue.put_nowait(latest_pose)
                     except queue.Full:
-                        pose_queue.get_nowait()
+                        try:
+                            pose_queue.get_nowait()  # Remove the old item
+                        except queue.Empty:
+                            pass  # Queue was already empty, ignore
                         pose_queue.put_nowait(latest_pose)
                 
         return
