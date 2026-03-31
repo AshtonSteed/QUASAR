@@ -10,9 +10,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
+from GSCore.core.trajectory_math import TrajectoryGenerator
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from GSCore.data.logger import FlightLogger
 from common_classes import SystemState
+
 
 class QuasarGUI:
     def __init__(self, shared_state, command_queue=None):
@@ -45,6 +47,11 @@ class QuasarGUI:
                 self.tracked_vars.extend(var_list)
         # Generate buffers for each variable
         self.history = {var: deque(maxlen=self.max_points) for var in self.tracked_vars}
+        
+        # Trajectory Threading Variables
+        self.trajectory_thread = None
+        self.cancel_trajectory = False
+        
     
     def get_trackball_lines(self, quat, scale=50):
         rot = Rotation.from_quat(quat)
@@ -90,17 +97,81 @@ class QuasarGUI:
             self.cmd_queue.land(height=0.0, duration=2.0)
 
     def cb_emergency_stop(self):
+        # 1. Kill any active trajectory stream in GUI
+        self.cancel_trajectory = True
+        
+        # 2. Send hardware halt command
         if self.cmd_queue:
             self.cmd_queue.emergency_stop()
+            print("EMERGENCY STOP: Flight Aborted and Motors Deactivated.")
+
+    def _stream_waypoints(self, waypoints, segment_duration):
+        """This runs in the background. It won't freeze your buttons!"""
+        for i, wp in enumerate(waypoints):
+            if self.cancel_trajectory:
+                print("Aborting stream.")
+                break
+                
+            x, y, z, yaw = wp
+            # The 'linear=True' is key for the Crazyflie high-level commander
+            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=segment_duration, linear=True)
+            time.sleep(segment_duration)
 
     def cb_goto(self):
-        if self.cmd_queue:
-            # Pull the live float values from the DPG input boxes
-            tgt_x = dpg.get_value("input_goto_x")
-            tgt_y = dpg.get_value("input_goto_y")
-            tgt_z = dpg.get_value("input_goto_z")
-            tgt_duration = dpg.get_value("input_goto_time")
-            self.cmd_queue.goto(tgt_x, tgt_y, tgt_z, yaw=0.0, duration=tgt_duration)
+        if not self.cmd_queue: return
+        
+        # 1. Read standard Target/Timing inputs
+        tgt_x = dpg.get_value("input_goto_x")
+        tgt_y = dpg.get_value("input_goto_y")
+        tgt_z = dpg.get_value("input_goto_z")
+        tgt_duration = dpg.get_value("input_goto_time")
+            
+        # 2. Read Trajectory-specific inputs
+        traj_type = dpg.get_value("input_traj_type")
+        n_waypoints = dpg.get_value("input_n_waypoints")
+        
+        # Ensure N is at least 2, creating a real path
+        if n_waypoints < 2: 
+            n_waypoints = 2
+            
+        # 3. Start Point (P0), current position from shared state 
+        with self.state.lock:
+            start_pos = (
+                self.state.estimate_pose.x, 
+                self.state.estimate_pose.y, 
+                self.state.estimate_pose.z, 
+                0.0 # Default starting yaw
+            )
+            
+        # 4. Route to correct trajectory generator based on dropdown  
+        if traj_type == "Linear":
+            target_pos = (tgt_x, tgt_y, tgt_z, 0.0)
+            waypoints = TrajectoryGenerator.linear(start_pos, target_pos, n_waypoints)
+            
+        elif traj_type == "Helical":
+            radius = dpg.get_value("input_radius")
+            sweep_angle = dpg.get_value("input_sweep")
+            center = (tgt_x, tgt_y)
+            
+            waypoints = TrajectoryGenerator.helical(
+                start_pos, center, radius, sweep_angle, tgt_z, n_waypoints
+            )
+            
+        # 5. Calculate pacing and spawn the thread
+        segment_duration = tgt_duration / n_waypoints
+        
+        self.cancel_trajectory = True
+        if self.trajectory_thread and self.trajectory_thread.is_alive():
+            self.trajectory_thread.join(timeout=0.1)
+            
+        self.cancel_trajectory = False
+        self.trajectory_thread = threading.Thread(
+            target=self._stream_waypoints,
+            args=(waypoints, segment_duration),
+            daemon=True
+        )
+        self.trajectory_thread.start()
+        
         
     def cb_log(self):
         print("Logging command received!")
@@ -190,20 +261,47 @@ class QuasarGUI:
 
                 dpg.add_spacer(width=30)
 
-                # GoTo Target Inputs
+                # High-Level Trajectory Command Inputs
                 with dpg.group():
-                    dpg.add_text("High-Level Trajectory Command", color=(200, 200, 200))
+                    dpg.add_text("Trajectory Command Setup", color=(200, 200, 200))
+                    
+                    # Row 1: Target Coordinates
                     with dpg.group(horizontal=True):
                         dpg.add_text("X:")
-                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=120, step=0.1)
+                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=90, step=0.1)
                         dpg.add_text("Y:")
-                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=120, step=0.1)
+                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=90, step=0.1)
                         dpg.add_text("Z:")
-                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=120, step=0.1)
+                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=90, step=0.1)
+                    
+                    # Row 2: General Flight Parameters
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Type:")
+                        dpg.add_combo(items=["Linear", "Helical"], default_value="Linear", tag="input_traj_type", width=100)
                         dpg.add_text("Time(s):")
-                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=120, step=0.5)
-                        dpg.add_spacer(width=10)
-                        dpg.add_button(label="SEND GOTO", width=100, callback=self.cb_goto)
+                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=90, step=0.5)
+                        dpg.add_text("N-Pts:")
+                        dpg.add_input_int(tag="input_n_waypoints", default_value=15, width=90, step=1)
+                        
+                    # Row 3: Helical-Specific Parameters
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Radius (m):")
+                        dpg.add_input_float(tag="input_radius", default_value=1.0, width=90, step=0.1)
+                        dpg.add_text("Sweep (rad):")
+                        dpg.add_input_float(tag="input_sweep", default_value=3.14, width=90, step=0.1)
+
+                    # Row 4: The Execute Button
+                    dpg.add_spacer(height=5)
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(label="EXECUTE TRAJECTORY", width=250, height=30, callback=self.cb_goto)
+                        
+                        # Add a visual theme to the Execute button
+                        with dpg.theme() as exec_theme:
+                            with dpg.theme_component(dpg.mvButton):
+                                dpg.add_theme_color(dpg.mvThemeCol_Button, (40, 150, 40)) # Greenish
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (50, 200, 50))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (30, 120, 30))
+                        dpg.bind_item_theme(dpg.last_item(), exec_theme)
                         
             dpg.add_separator()
             dpg.add_spacer(height=10)
