@@ -45,19 +45,40 @@ class TrajectoryUI:
         self.btn.pack(pady=20)
 
     def plot_path(self):
+        import os
+        
+        # 1. Ask Python exactly where this GUI file is saved
+        current_folder = os.path.dirname(os.path.abspath(__file__))
+        
+        # 2. Build the exact path to the MATLAB file
+        target_file = os.path.join(current_folder, "plot_desired.m")
+        
+        # 3. SUPERVISOR CHECK: Does Python actually see the file?
+        if not os.path.exists(target_file):
+            error_msg = f"STOPPING: Python cannot find the file at:\n{target_file}\n\nPlease check the exact file name and location."
+            print(error_msg)
+            messagebox.showerror("Missing File", error_msg)
+            return # Abort before MATLAB even tries
+            
         try:
-            # Inject variables into MATLAB workspace
+            # 4. Tell MATLAB to navigate to that exact folder AND add it to its path
+            print(f"File found! Forcing MATLAB to: {current_folder}")
+            self.eng.cd(current_folder, nargout=0)
+            self.eng.addpath(current_folder, nargout=0) # Extra layer of safety
+            
+            # 5. Inject variables into MATLAB workspace
             self.eng.workspace['ui_shape_id'] = float(self.shape_id.get())
             self.eng.workspace['ui_width'] = float(self.width.get())
             self.eng.workspace['ui_height'] = float(self.height.get())
             self.eng.workspace['ui_speed'] = float(self.speed.get())
             self.eng.workspace['ui_time'] = float(self.total_time.get())
             
-            # Run the MATLAB plotting script
-            print("Sending data to MATLAB...")
-            self.eng.plot_desired(nargout=0)
+            # 6. Command MATLAB to run its script
+            print("Variables injected. Executing plot_desired...")
+            self.eng.eval("plot_desired", nargout=0)
+            
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("MATLAB Error", str(e))
 
 if __name__ == "__main__":
     root = tk.Tk()
