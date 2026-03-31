@@ -27,7 +27,7 @@ def start_testbed():
         },
         daemon=True # Daemon=True means this thread will die when you close the GUI
     )
-    uav_thread.start()# Test Crazyflie connection with mock data stream
+    uav_thread.start() # Test Crazyflie connection with mock data stream
     start_gui(shared_state, command_queue=command_queue)
     
     
