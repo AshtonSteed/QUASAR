@@ -11,6 +11,7 @@ class DroneCmd(Enum):
     GOTO = auto()
     START_LL_STREAM = auto()
     HOVER = auto()
+    TRAJECTORY = auto()
 
 @dataclass
 class DroneCommand:
@@ -21,6 +22,7 @@ class DroneCommand:
     yaw: float = 0.0
     height: float = 0.0
     duration: float = 0.0
+    waypoints: list = None 
 
 class CommandQueue: # Removed empty parenthesis
     def __init__(self):
@@ -32,6 +34,12 @@ class CommandQueue: # Removed empty parenthesis
         self.mode = "IDLE"           
         self._hl_end_time = 0.0 # Fixed variable name
         self.kill = False
+        
+        # --- NEW TRAJECTORY TRACKING ---
+        self.current_trajectory = []
+        self.traj_step_index = 0
+        self.traj_step_duration = 0.0
+        self.traj_next_step_time = 0.0
 
     def run(self, cf_manager):
         """The main 50Hz control loop"""
@@ -54,7 +62,6 @@ class CommandQueue: # Removed empty parenthesis
             # 3. Maintain a strict 50Hz loop (20ms)
             elapsed = time.time() - loop_start
             time.sleep(max(0.0, 0.02 - elapsed))
-
 
     # TODO: Ensure that UAV hovers in place after ALL commands
     def _check_queue(self, cf_manager):
@@ -93,6 +100,14 @@ class CommandQueue: # Removed empty parenthesis
                     self.mode = "HL_BUSY"
                     self._hl_end_time = time.time() + cmd.duration
                     
+                elif cmd.action == DroneCmd.TRAJECTORY:
+                    self.current_trajectory = cmd.waypoints
+                    self.traj_step_index = 0
+                    # Total time divided by number of points gives us segment timing
+                    self.traj_step_duration = cmd.duration / len(cmd.waypoints)
+                    self.mode = "TRAJECTORY"
+                    self._hl_end_time = time.time() + cmd.duration
+                    self.traj_next_step_time = time.time() # Start first point now  
             except queue.Empty:
                 pass # Queue is empty, just keep flying
 
@@ -102,10 +117,31 @@ class CommandQueue: # Removed empty parenthesis
             if time.time() >= self._hl_end_time:
                 self.mode = "IDLE"
                 print("High-level maneuver complete.")
+        
+        elif self.mode == "TRAJECTORY": #NEW TRAJECTORY MODE
+            now = time.time()
+            
+            # Check if it's time for the next waypoint
+            if now >= self.traj_next_step_time and self.traj_step_index < len(self.current_trajectory):
+                wp = self.current_trajectory[self.traj_step_index]
+                
+                # Command the linear segment
+                cf_manager.cf.high_level_commander.go_to(
+                    wp[0], wp[1], wp[2], wp[3], 
+                    self.traj_step_duration, relative=False, linear=True
+                )
+                
+                self.traj_step_index += 1
+                self.traj_next_step_time = now + self.traj_step_duration
+
+            # Once the total duration has passed, return to IDLE
+            if now >= self._hl_end_time:
+                self.mode = "IDLE"
+                print("Trajectory arc complete.")
                 
         elif self.mode == "INITIALIZING":
             threshold = 0.001
-          
+
             if (cf_manager._variance['x'] < threshold and 
                 cf_manager._variance['y'] < threshold and 
                 cf_manager._variance['z'] < threshold):
@@ -139,3 +175,11 @@ class CommandQueue: # Removed empty parenthesis
         
     def kill_motors(self):
         self.kill = True
+        
+    def execute_trajectory(self, waypoints, total_duration):
+        """Helper to push the trajectory into the queue"""
+        self.command_queue.put(DroneCommand(
+            action=DroneCmd.TRAJECTORY, 
+            waypoints=waypoints, 
+            duration=total_duration
+        ))   

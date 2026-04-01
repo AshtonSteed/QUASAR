@@ -243,7 +243,7 @@ class CrazyflieDriver:
             self.cf.log.add_config(kal_log)
             self.cf.log.add_config(ctrl_log)
             
-           # add callback functions from the shared logging state
+            # add callback functions from the shared logging state
             pose_log.data_received_cb.add_callback(self.logging_state.pose_data_callback)
             dyn_log.data_received_cb.add_callback(self.logging_state.dyn_data_callback)
             motor_log.data_received_cb.add_callback(self.logging_state.motor_data_callback)
@@ -318,7 +318,7 @@ class CrazyflieDriver:
         self.stop()
         
         
-       
+        
         
         
         
@@ -380,8 +380,8 @@ def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
         # SAFETY CUTOFF: Instantly drop thrust to 0 when the duration ends
         # to prevent the drone from flying away into the ceiling.
         #self.cf.commander.send_setpoint(0.0, 0.0, 0.0, 0)
-       # 3. Grab our current Mocap position so we hover straight up, not diagonally
-       
+        # 3. Grab our current Mocap position so we hover straight up, not diagonally
+        
         pose = self._extract_pose_from_queue()
         start_x = pose.x if (pose and pose.valid) else 0.0
         start_y = pose.y if (pose and pose.valid) else 0.0
