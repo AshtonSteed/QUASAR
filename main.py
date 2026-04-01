@@ -15,9 +15,9 @@ def start_testbed():
     command_queue = CommandQueue()
     shared_state = SystemState()
     # Replace with real motive stream when wanted
-    motive_client = start_mock_stream(pose_queue, shared_state)
+    motive_client = start_motive_stream(pose_queue, shared_state)
     
-    uav_thread = threading.Thread(
+    '''uav_thread = threading.Thread(
         target=connect_to_uav, 
         args=("radio://0/110/1M",), # Positional arguments go here (must be a tuple!)
         kwargs={                   # Keyword arguments go here
@@ -27,8 +27,16 @@ def start_testbed():
         },
         daemon=True # Daemon=True means this thread will die when you close the GUI
     )
-    uav_thread.start() # Test Crazyflie connection with mock data stream
-    start_gui(shared_state, command_queue=command_queue)
+    uav_thread.start() # Test Crazyflie connection with mock data stream'''
+    
+    uav_driver = connect_to_uav("radio://0/110/1M",
+                                pose_queue, 
+                                command_queue, 
+                                shared_state)
+    
+    
+    start_gui(shared_state, command_queue=command_queue, crazyflie=uav_driver)
+    #test_gui()
     
     
 

@@ -22,7 +22,8 @@ class DroneCommand:
     yaw: float = 0.0
     height: float = 0.0
     duration: float = 0.0
-    waypoints: list = None 
+    linear: bool = False # For future use in trajectory following
+    waypoints: list = None # For trajectory commands, list of (x,y,z,yaw) tuples
 
 class CommandQueue: # Removed empty parenthesis
     def __init__(self):
@@ -158,7 +159,7 @@ class CommandQueue: # Removed empty parenthesis
                     
 
     def emergency_stop(self):
-        self.is_running = False
+        self.kill_motors()
         
     def takeoff(self, height=1.0, duration=4.0):
         print("Takeoff command received from GUI.")
@@ -170,8 +171,8 @@ class CommandQueue: # Removed empty parenthesis
     def land(self, height=0.0, duration=2.0):
         self.command_queue.put(DroneCommand(action=DroneCmd.LAND, height=height, duration=duration))
         
-    def goto(self, x, y, z, yaw=0.0, duration=2.0):
-        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration))
+    def goto(self, x, y, z, yaw=0.0, duration=2.0, linear=False):
+        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration, linear=linear))
         
     def kill_motors(self):
         self.kill = True

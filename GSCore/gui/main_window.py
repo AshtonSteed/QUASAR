@@ -364,9 +364,11 @@ class QuasarGUI:
         
         while dpg.is_dearpygui_running():
             snap = self.state.get_snapshot()
+            #print(11343434343)
             
             # Only append if the data's timestamp is newer than the last one
             if snap['t'] > last_t:
+                #print(14134)
                 last_t = snap['t']
                 current_time = time.time() - start_time
                 self.time_data.append(current_time)
@@ -430,7 +432,7 @@ class QuasarGUI:
                 else:
                     dpg.set_value("status_locked", "LOCKED: FALSE")
                     dpg.configure_item("status_locked", color=(150, 150, 150))
-        
+            #print(13431413513535)
             # --- SCROLLING LOGIC (Runs every frame for smooth visuals) ---
             if self.time_data:
                 latest_t = self.time_data[-1]
@@ -443,6 +445,7 @@ class QuasarGUI:
                 
             
             dpg.render_dearpygui_frame()
+            #print(13413413)
             
         dpg.destroy_context()
         

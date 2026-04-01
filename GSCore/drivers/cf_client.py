@@ -47,6 +47,7 @@ class CrazyflieDriver:
         
         #Kalman Filter Variance Storage
         self._variance = {'x': None, 'y': None, 'z': None}
+        
 
     
     def connect(self):
@@ -56,6 +57,7 @@ class CrazyflieDriver:
         """
         print(f"Connecting to {self.uri}...")
         self.cf.open_link(self.uri)
+        print("ASFSF")
         
         # Wait here until the callback fires (or 10s timeout)
         # This makes the code 'feel' synchronous and simple.
@@ -65,6 +67,7 @@ class CrazyflieDriver:
             return False
             
         if self.connection_error:
+            print("DFD")
             return False
             
         return True
@@ -328,6 +331,7 @@ def test_cf_connection(uri, shared_state=None):
     shared_state = SystemState() if shared_state is None else shared_state
     motive_client = start_motive_stream(pose_queue, shared_state)
     cflib.crtp.init_drivers()
+    #time.sleep(1)
     driver = CrazyflieDriver(uri, pose_queue, shared_state)
     if driver.connect():
         print("Connection successful!")
@@ -339,19 +343,22 @@ def test_cf_connection(uri, shared_state=None):
     return driver
 
 def connect_to_uav(uri, pose_queue=None, command_queue=None, shared_state=None):
-    pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
+    #pose_queue = queue.Queue(maxsize=1) if pose_queue is None else pose_queue
     #command_queue = queue.Queue(maxsize=1) if command_queue is None else command_queue
-    shared_state = SystemState() if shared_state is None else shared_state
+    #shared_state = SystemState() if shared_state is None else shared_state
     #motive_client = start_motive_stream(pose_queue, shared_state)
     cflib.crtp.init_drivers()
+    #time.sleep(1)
     driver = CrazyflieDriver(uri, pose_queue, command_queue, shared_state=shared_state)
     if driver.connect():
         print("Connection successful!")
         driver.start()
         #time.sleep(60)  # Let it run for a bit
         #driver.stop()
+        
     else:
         print("Connection failed.")
+    return driver   
     
     
     '''
