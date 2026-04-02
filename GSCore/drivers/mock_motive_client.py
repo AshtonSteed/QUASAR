@@ -23,7 +23,7 @@ def mock_motive_worker(swarm_dict):
             
             # 1. Create Fake Data 
             # Phase shift based on index (i) so the drones are spaced out in a circle
-            phase_offset = i * (math.pi / 2) 
+            phase_offset = 2*math.pi * (i / len(swarm_dict))
             
             # Radius 1.0m, Height 1.0m, Period 5s
             x = 1.0 * math.cos(t * (2 * math.pi / 5.0) + phase_offset)
@@ -31,7 +31,7 @@ def mock_motive_worker(swarm_dict):
             z = 1.0 + 0.1 * math.sin(t * 2 + phase_offset) # Slight hover bob
             
             # Quaternions (Just flat for now)
-            qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
+            qx, qy, qz, qw = 0.0, 0.0, math.sin(i * t), 1.0
 
             pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0, True)
             
@@ -43,6 +43,11 @@ def mock_motive_worker(swarm_dict):
                 system_state.estimate_pose.x = x
                 system_state.estimate_pose.y = y
                 system_state.estimate_pose.z = z
+                
+                system_state.estimate_pose.qx = qx
+                system_state.estimate_pose.qy = qy
+                system_state.estimate_pose.qz = qz
+                system_state.estimate_pose.qw = qw
                 
                 # Mock the health stats so the GUI flags light up
                 system_state.battery_voltage = 3.9

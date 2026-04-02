@@ -59,35 +59,48 @@ class QuasarGUI:
         self.cam_pan_x = 400             # Center X
         self.cam_pan_y = 350             # Center Y
         
-    def get_trackball_lines(self, quat, scale=50):
-        rot = Rotation.from_quat(quat)
-        rot_matrix = rot.as_matrix()
-        axes = np.array([
-            [1, 0, 0], # X axis (Red)
-            [0, 1, 0], # Y axis (Green)
-            [0, 0, 1]  # Z axis (Blue)
-        ])
-        rotated_axes = axes @ rot_matrix.T
-        lines_2d = []
-        for axis in rotated_axes:
-            screen_x = axis[0] * scale
-            screen_y = -axis[2] * scale 
-            lines_2d.append([screen_x, screen_y])
-        return lines_2d 
-    def project_3d_to_2d(self, x, y, z):
-            """Dynamic 3D to 2D projection using Yaw and Pitch."""
-            # 1. Rotate around Z-axis (Yaw)
-            x_rot = x * math.cos(self.cam_yaw) - y * math.sin(self.cam_yaw)
-            y_rot = x * math.sin(self.cam_yaw) + y * math.cos(self.cam_yaw)
-
-            # 2. Rotate around X-axis (Pitch) to tilt the ground
-            y_screen = y_rot * math.cos(self.cam_pitch) - z * math.sin(self.cam_pitch)
-
-            # 3. Map to screen space
-            screen_x = self.cam_pan_x + x_rot * self.cam_scale
-            screen_y = self.cam_pan_y - y_screen * self.cam_scale
+    def get_trackball_lines(self, quat, axis_length=0.4):
+            """Updated to sync perfectly with the camera's yaw, pitch, and zoom."""
+            rot = Rotation.from_quat(quat)
+            rot_matrix = rot.as_matrix()
             
-            return screen_x, screen_y
+            # Define 3D unit axes (scaled to physical length in meters)
+            axes = np.array([
+                [axis_length, 0, 0], # X (Red - Forward)
+                [0, axis_length, 0], # Y (Green - Left)
+                [0, 0, axis_length]  # Z (Blue - Up)
+            ])
+            rotated_axes = axes @ rot_matrix.T
+            
+            # Project the origin (0,0,0) to figure out the screen center point
+            ox, oy = self.project_3d_to_2d(0, 0, 0)
+            
+            lines_2d = []
+            for axis in rotated_axes:
+                # Project the rotated endpoint through the camera
+                px, py = self.project_3d_to_2d(axis[0], axis[1], axis[2])
+                
+                # Since the DPG node handles the drone's position on screen, 
+                # we just return the distance from the origin.
+                lines_2d.append([px - ox, py - oy])
+                
+            return lines_2d
+    def project_3d_to_2d(self, x, y, z):
+        """Corrected Dynamic 3D to 2D projection."""
+        # 1. Rotate around Z-axis (Yaw)
+        x1 = x * math.cos(self.cam_yaw) - y * math.sin(self.cam_yaw)
+        y1 = x * math.sin(self.cam_yaw) + y * math.cos(self.cam_yaw)
+
+        # 2. Rotate around camera's X-axis (Pitch)
+        # pitch=0 -> Side view (looking at Z). pitch=pi/2 -> Top-down (looking at Y)
+        screen_y_3d = y1 * math.sin(self.cam_pitch) + z * math.cos(self.cam_pitch)
+
+        # 3. Map to screen space 
+        # DPG Canvas Y goes DOWN. So to make +Z go UP, we subtract from center_y.
+        screen_x = self.cam_pan_x + x1 * self.cam_scale
+        screen_y = self.cam_pan_y - screen_y_3d * self.cam_scale
+        
+        return screen_x, screen_y
         
     def _on_mouse_drag(self, sender, app_data):
         # app_data contains [button, x_delta, y_delta]
@@ -97,16 +110,16 @@ class QuasarGUI:
         if dpg.get_value("combo_agent_select") == "SWARM":
             # Left Click: Orbit (Yaw and Pitch)
             if dpg.is_mouse_button_down(dpg.mvMouseButton_Left):
-                self.cam_yaw -= dx * 0.01
-                self.cam_pitch -= dy * 0.01
+                self.cam_yaw += dx * 0.001
+                self.cam_pitch += dy * 0.001
                 
                 # Clamp pitch to prevent flipping upside down
                 self.cam_pitch = max(0, min(self.cam_pitch, math.pi / 2.1))
                 
             # Right Click: Pan (Move X/Y Center)
             elif dpg.is_mouse_button_down(dpg.mvMouseButton_Right):
-                self.cam_pan_x += dx
-                self.cam_pan_y += dy
+                self.cam_pan_x += dx * 0.1
+                self.cam_pan_y += dy * 0.1
 
     def _on_mouse_wheel(self, sender, app_data):
         # app_data is the scroll wheel delta (usually 1 or -1)
@@ -435,7 +448,8 @@ class QuasarGUI:
                         # (Scaled down to 30 so they aren't massive on the swarm map)
                         endpoints = self.get_trackball_lines(
                             [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']], 
-                            scale=30
+                            axis_length=0.4 # Lines are drawn 0.4 meters long
+                        
                         )
                         
                         dpg.configure_item(f"s_tb_x_{a_id}", p2=endpoints[0])

@@ -187,6 +187,10 @@ class CommandQueue: # Removed empty parenthesis
         ))   
         
         
+        
+
+#TODO: Class isnt used right now, GUI handles dispacting commands. 
+# This might be an unnecessary class, but ill leave it incase trajectories are tricky in the gui. 
 class SwarmCommandManager:
     def __init__(self, swarm_dict):
         self.swarm_dict = swarm_dict
