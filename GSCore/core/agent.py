@@ -24,6 +24,9 @@ class Agent:
     def connect_and_start(self):
         """Helper to spin up this specific agent's driver."""
         if self.driver.connect():
+            print(f"Agent {self.agent_id} connected successfully.")
             self.driver.start()
             return True
+        
+        print(f"Agent {self.agent_id} failed to connect.")
         return False

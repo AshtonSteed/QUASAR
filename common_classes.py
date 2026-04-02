@@ -168,6 +168,7 @@ class SystemState:
         Returns a flat, fast copy of the current state for the GUI to log and plot.
         Grabbing individual properties prevents reference leaks.
         """ 
+        
         with self.lock:
             return {
                 # Timing

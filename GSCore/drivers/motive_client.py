@@ -44,13 +44,13 @@ def start_motive_stream(swarm_dict):
    
     print("Connecting to Motive...")
     
-
+    motive_router = {agent.motive_id: agent for agent in swarm_dict.values()}
     # This callback function is called every time Motive sends new data
     def receive_motive_data(data_frame: DataFrame):
         # Find our rigid body in the data frame
         for body in data_frame.rigid_bodies:
-            if body.id_num in swarm_dict:
-                agent = swarm_dict[body.id_num]
+            if body.id_num in motive_router:
+                agent = motive_router[body.id_num]
                 # Extract position (x, y, z) and rotation (qx, qy, qz, qw)
                 pos = body.pos
                 rot = body.rot

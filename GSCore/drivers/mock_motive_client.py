@@ -8,52 +8,68 @@ import queue
 from GSCore.drivers.motive_client import print_worker
 from common_classes import SystemState, Pose
 
-def mock_motive_worker(pose_queue, system_state):
+def mock_motive_worker(swarm_dict):
     """Generates fake drone position data at 120Hz"""
     print("[MOCK] Started. Generates a circle pattern.")
     
     start_time = time.time()
     
     while True:
-        # 1. Create Fake Data (e.g., a Circle)
         t = time.time() - start_time
         
-        # Radius 1.0m, Height 1.0m, Period 5s
-        x = 1.0 * math.cos(t * (2 * math.pi / 5.0))
-        y = 1.0 * math.sin(t * (2 * math.pi / 5.0))
-        z = 1.0 + 0.1 * math.sin(t * 2) # Slight hover bob
-        x, y, z = 0, 0, 0
-        
-        # Quaternions (Just flat for now)
-        qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
-
-
-
-        pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0, True)
-        # 2. Update STATE (For Logger/GUI)
-        if system_state:
-            system_state.motive_pose = pose
-            system_state.motive_time = time.time()
+        for i, agent in enumerate(swarm_dict.values()):
+            system_state = agent.state
+            pose_queue = agent.pose_queue
             
-       
-        
-        try:
-            pose_queue.put_nowait(pose)
-        except queue.Full:
+            # 1. Create Fake Data 
+            # Phase shift based on index (i) so the drones are spaced out in a circle
+            phase_offset = i * (math.pi / 2) 
+            
+            # Radius 1.0m, Height 1.0m, Period 5s
+            x = 1.0 * math.cos(t * (2 * math.pi / 5.0) + phase_offset)
+            y = 1.0 * math.sin(t * (2 * math.pi / 5.0) + phase_offset)
+            z = 1.0 + 0.1 * math.sin(t * 2 + phase_offset) # Slight hover bob
+            
+            # Quaternions (Just flat for now)
+            qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
+
+            pose = Pose.from_motive([x, y, z], [qx, qy, qz, qw], 0.0, True)
+            
+            # 2. Update STATE (For Logger/GUI) Safely using the thread lock
+            with system_state.lock:
+                system_state.motive_pose = pose
+                
+                # Mock the estimator as well, otherwise the GUI "Estimate" graphs remain blank
+                system_state.estimate_pose.x = x
+                system_state.estimate_pose.y = y
+                system_state.estimate_pose.z = z
+                
+                # Mock the health stats so the GUI flags light up
+                system_state.battery_voltage = 3.9
+                system_state.armed = True
+                system_state.flying = True
+                
+                # CRITICAL: Update the main time tracker so the GUI knows to draw a new frame!
+                system_state.time = time.time() 
+                
+            # 3. Manage the Queue
             try:
-                pose_queue.get_nowait() # Trash old
-                pose_queue.put_nowait(pose) # Push new
-            except queue.Empty:
-                pass
+                pose_queue.put_nowait(pose)
+            except queue.Full:
+                try:
+                    pose_queue.get_nowait() # Trash old
+                    pose_queue.put_nowait(pose) # Push new
+                except queue.Empty:
+                    pass
                 
         # 4. Sleep to simulate 120Hz
         time.sleep(1/120.0)
 
-def start_mock_stream(pose_queue, system_state=None):
+def start_mock_stream(swarm_dict):
     
     t = threading.Thread(
         target=mock_motive_worker, 
-        args=(pose_queue, system_state), 
+        args=(swarm_dict,), 
         daemon=True,
         name="MockMotive"
     )
