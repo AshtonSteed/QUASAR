@@ -17,9 +17,8 @@ from common_classes import SystemState
 
 
 class QuasarGUI:
-    def __init__(self, shared_state, command_queue=None):
-        self.state = shared_state
-        self.cmd_queue = command_queue
+    def __init__(self, swarm_dict):
+        self.swarm_dict = swarm_dict
         self.max_points = 500
         self.time_data = deque(maxlen=self.max_points)
         self.logger = FlightLogger(self.state)

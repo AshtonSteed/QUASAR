@@ -12,7 +12,6 @@ from common_classes import SystemState, Pose
 
 # --- Motive (NatNet) Settings ---
 MOTIVE_SERVER_IP = "127.0.0.1"  # LocalHost IP
-RIGID_BODY_ID = 1             #   The ID the UAV in Motive  
 N = 4  # Number of markers on the rigid body
 
 
@@ -40,7 +39,7 @@ def print_worker(pose_queue):
             pass
 
 # Create a motive listener thread to receive data
-def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = None):
+def start_motive_stream(swarm_dict):
     # This callback function is called every time Motive sends new data
    
     print("Connecting to Motive...")
@@ -50,29 +49,28 @@ def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = Non
     def receive_motive_data(data_frame: DataFrame):
         # Find our rigid body in the data frame
         for body in data_frame.rigid_bodies:
-            if body.id_num == RIGID_BODY_ID:
+            if body.id_num in swarm_dict:
+                agent = swarm_dict[body.id_num]
                 # Extract position (x, y, z) and rotation (qx, qy, qz, qw)
                 pos = body.pos
                 rot = body.rot
                 err = body.marker_error  / math.sqrt(N)# Mean marker error
                 valid = body.tracking_valid
-                
-                
+            
                 # Package 6DOF state from Motive
                 latest_pose = Pose.from_motive(pos, rot, err, valid)
-                # Update shared logger state
-                if shared_state:
-                    shared_state.update_motive(latest_pose)
+                
+                agent.state.update_motive(latest_pose)
                 # Push to the queue
                 if valid:
                     try:
-                        pose_queue.put_nowait(latest_pose)
+                        agent.pose_queue.put_nowait(latest_pose)
                     except queue.Full:
                         try:
-                            pose_queue.get_nowait()  # Remove the old item
+                            agent.pose_queue.get_nowait()  # Remove the old item
                         except queue.Empty:
                             pass  # Queue was already empty, ignore
-                        pose_queue.put_nowait(latest_pose)
+                        agent.pose_queue.put_nowait(latest_pose)
                 
         return
 

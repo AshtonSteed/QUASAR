@@ -2,41 +2,39 @@
 import queue
 import threading
 import time
+
+import cflib
+from GSCore.core.agent import Agent
 from GSCore.drivers.motive_client import print_motive_data, start_motive_stream, start_print_thread
 from GSCore.drivers.mock_motive_client import print_mock_data, start_mock_stream
 from GSCore.gui.main_window import test_gui, start_gui
-from common_classes import SystemState, Pose   
-from GSCore.drivers.cf_client import connect_to_uav, test_cf_connection
+
 from GSCore.core.commands import CommandQueue
 
 def start_testbed():
-    #test_gui()
-    pose_queue = queue.Queue(maxsize=1)
-    command_queue = CommandQueue()
-    shared_state = SystemState()
-    # Replace with real motive stream when wanted
-    motive_client = start_motive_stream(pose_queue, shared_state)
+    # 1. Define Swarm Configuration
+    swarm_config = [
+        {"id": "CF_1", "uri": "radio://0/110/2M/E7E7E7E701", "motive_id": 1},
+        {"id": "CF_2", "uri": "radio://0/110/2M/E7E7E7E702", "motive_id": 2},
+    ]
     
-    '''uav_thread = threading.Thread(
-        target=connect_to_uav, 
-        args=("radio://0/110/1M",), # Positional arguments go here (must be a tuple!)
-        kwargs={                   # Keyword arguments go here
-            "pose_queue": pose_queue, 
-            "command_queue": command_queue, 
-            "shared_state": shared_state
-        },
-        daemon=True # Daemon=True means this thread will die when you close the GUI
-    )
-    uav_thread.start() # Test Crazyflie connection with mock data stream'''
+    # 2. Instantiate Agents
+    swarm_dict = {}
+    for conf in swarm_config:
+        agent = Agent(conf["id"], conf["uri"], conf["motive_id"])
+        swarm_dict[conf["motive_id"]] = agent
+        
+    # 3. Start Motive Router
+    motive_client = start_motive_stream(swarm_dict)
     
-    uav_driver = connect_to_uav("radio://0/110/1M",
-                                pose_queue, 
-                                command_queue, 
-                                shared_state)
-    
-    
-    start_gui(shared_state, command_queue=command_queue, crazyflie=uav_driver)
-    #test_gui()
+    # 4. Connect Hardware
+    cflib.crtp.init_drivers()
+    for agent in swarm_dict.values():
+        if agent.driver.connect():
+            agent.driver.start()
+            
+    # 5. Launch GUI
+    start_gui(swarm_dict)
     
     
 
