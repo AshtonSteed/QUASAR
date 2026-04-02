@@ -52,6 +52,13 @@ class QuasarGUI:
         self.trajectory_threads = []
         self.cancel_trajectory = False
         
+        # Camera State for 3D View
+        self.cam_yaw = math.pi / 4       # 45 degrees default
+        self.cam_pitch = math.pi / 3     # 30 degrees default
+        self.cam_scale = 80              # Pixels per meter (Zoom)
+        self.cam_pan_x = 400             # Center X
+        self.cam_pan_y = 350             # Center Y
+        
     def get_trackball_lines(self, quat, scale=50):
         rot = Rotation.from_quat(quat)
         rot_matrix = rot.as_matrix()
@@ -67,6 +74,46 @@ class QuasarGUI:
             screen_y = -axis[2] * scale 
             lines_2d.append([screen_x, screen_y])
         return lines_2d 
+    def project_3d_to_2d(self, x, y, z):
+            """Dynamic 3D to 2D projection using Yaw and Pitch."""
+            # 1. Rotate around Z-axis (Yaw)
+            x_rot = x * math.cos(self.cam_yaw) - y * math.sin(self.cam_yaw)
+            y_rot = x * math.sin(self.cam_yaw) + y * math.cos(self.cam_yaw)
+
+            # 2. Rotate around X-axis (Pitch) to tilt the ground
+            y_screen = y_rot * math.cos(self.cam_pitch) - z * math.sin(self.cam_pitch)
+
+            # 3. Map to screen space
+            screen_x = self.cam_pan_x + x_rot * self.cam_scale
+            screen_y = self.cam_pan_y - y_screen * self.cam_scale
+            
+            return screen_x, screen_y
+        
+    def _on_mouse_drag(self, sender, app_data):
+        # app_data contains [button, x_delta, y_delta]
+        _, dx, dy = app_data
+        
+        # Only rotate if viewing the SWARM tab (optional check)
+        if dpg.get_value("combo_agent_select") == "SWARM":
+            # Left Click: Orbit (Yaw and Pitch)
+            if dpg.is_mouse_button_down(dpg.mvMouseButton_Left):
+                self.cam_yaw -= dx * 0.01
+                self.cam_pitch -= dy * 0.01
+                
+                # Clamp pitch to prevent flipping upside down
+                self.cam_pitch = max(0, min(self.cam_pitch, math.pi / 2.1))
+                
+            # Right Click: Pan (Move X/Y Center)
+            elif dpg.is_mouse_button_down(dpg.mvMouseButton_Right):
+                self.cam_pan_x += dx
+                self.cam_pan_y += dy
+
+    def _on_mouse_wheel(self, sender, app_data):
+        # app_data is the scroll wheel delta (usually 1 or -1)
+        if dpg.get_value("combo_agent_select") == "SWARM":
+            # Zoom in/out by adjusting the scale
+            self.cam_scale += app_data * 5
+            self.cam_scale = max(10, min(self.cam_scale, 300)) # Limit zoom
 
     def _toggle_visibility(self, sender, app_data, user_data):
         is_checked = app_data
@@ -257,18 +304,39 @@ class QuasarGUI:
             # LAYOUT 1: SWARM OVERVIEW (Default)
             # ==========================================
             with dpg.group(tag="group_swarm_view", show=True):
-                dpg.add_text("Swarm Spatial Overview", color=(150, 150, 255))
-                with dpg.plot(label="Top-Down Map", width=-1, height=450):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="X Position (m)", tag="swarm_x_axis")
-                    dpg.set_axis_limits("swarm_x_axis", -3.0, 3.0) # Typical Motive Volume limits
+                    dpg.add_text("3D Swarm Spatial Overview", color=(150, 150, 255))
                     
-                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Y Position (m)", tag="swarm_y_axis")
-                    dpg.set_axis_limits("swarm_y_axis", -3.0, 3.0)
-                    
-                    # Create one scatter series for each drone
-                    for a_id in self.swarm_dict.keys():
-                        dpg.add_scatter_series([], [], label=a_id, tag=f"scatter_{a_id}", parent=y_axis)
+                    # Create a blank drawing canvas
+                    with dpg.drawlist(width=800, height=500, tag="swarm_3d_canvas"):
+                        # Draw a dark background
+                        dpg.draw_rectangle([0,0], [800,500], color=[50,50,50], fill=[30,30,30])
+                        
+                            # --- NEW: Generate tags for the grid lines ---
+                        self.grid_size = 3 # -3m to +3m
+                        self.grid_lines = []
+                        
+                        # X-axis parallel lines
+                        for y in range(-self.grid_size, self.grid_size + 1):
+                            tag = f"grid_x_{y}"
+                            dpg.draw_line([0,0], [0,0], color=[80, 80, 80, 150], thickness=1, tag=tag)
+                            self.grid_lines.append(('x', y, tag))
+                            
+                        # Y-axis parallel lines
+                        for x in range(-self.grid_size, self.grid_size + 1):
+                            tag = f"grid_y_{x}"
+                            dpg.draw_line([0,0], [0,0], color=[80, 80, 80, 150], thickness=1, tag=tag)
+                            self.grid_lines.append(('y', x, tag))
+                        
+                        # Create a trackball node for each drone
+                        for a_id in self.swarm_dict.keys():
+                            with dpg.draw_node(tag=f"swarm_node_{a_id}"):
+                                # Draw the X, Y, Z orientation lines
+                                dpg.draw_line([0,0], [0,0], color=[255, 50, 50], thickness=2, tag=f"s_tb_x_{a_id}")
+                                dpg.draw_line([0,0], [0,0], color=[50, 255, 50], thickness=2, tag=f"s_tb_y_{a_id}")
+                                dpg.draw_line([0,0], [0,0], color=[50, 150, 255], thickness=2, tag=f"s_tb_z_{a_id}")
+                                
+                                # Add a label hovering slightly above the drone
+                                dpg.draw_text([10, -20], text=a_id, color=[200, 200, 200], size=15)
 
 
             # ==========================================
@@ -312,6 +380,11 @@ class QuasarGUI:
                         dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
         dpg.create_viewport(title='QUASAR Swarm Testbed', width=1250, height=850)
+        
+        with dpg.handler_registry():
+            dpg.add_mouse_drag_handler(callback=self._on_mouse_drag)
+            dpg.add_mouse_wheel_handler(callback=self._on_mouse_wheel)
+            
         dpg.setup_dearpygui()
         dpg.show_viewport()
         
@@ -334,9 +407,40 @@ class QuasarGUI:
                     for var in self.tracked_vars:
                         self.history[a_id][var].append(snap[var])
 
-                    # 2A. Update scatter plot if we are in Swarm View
+                   
+                    # 2A. Update Isometric 3D Canvas if we are in Swarm View
                     if current_view == "SWARM":
-                        dpg.set_value(f"scatter_{a_id}", [[snap['ex']], [snap['ey']]])
+                        
+                        for axis, val, tag in self.grid_lines:
+                            if axis == 'x':
+                                p1 = self.project_3d_to_2d(-self.grid_size, val, 0)
+                                p2 = self.project_3d_to_2d(self.grid_size, val, 0)
+                            else:
+                                p1 = self.project_3d_to_2d(val, -self.grid_size, 0)
+                                p2 = self.project_3d_to_2d(val, self.grid_size, 0)
+                            dpg.configure_item(tag, p1=p1, p2=p2)
+                        # 1. Project the drone's 3D position to the 2D canvas
+                        sx, sy = self.project_3d_to_2d(
+                            snap['ex'], snap['ey'], snap['ez'], 
+                            
+                        )
+                        
+                        # 2. Translate the entire node to that pixel coordinate
+                        dpg.apply_transform(
+                            f"swarm_node_{a_id}", 
+                            dpg.create_translation_matrix([sx, sy])
+                        )
+                        
+                        # 3. Calculate and apply the rotated trackball lines
+                        # (Scaled down to 30 so they aren't massive on the swarm map)
+                        endpoints = self.get_trackball_lines(
+                            [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']], 
+                            scale=30
+                        )
+                        
+                        dpg.configure_item(f"s_tb_x_{a_id}", p2=endpoints[0])
+                        dpg.configure_item(f"s_tb_y_{a_id}", p2=endpoints[1])
+                        dpg.configure_item(f"s_tb_z_{a_id}", p2=endpoints[2])
 
             # 2B. Update detailed plots if viewing a specific agent
             if current_view != "SWARM":
