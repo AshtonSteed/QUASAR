@@ -84,6 +84,7 @@ class CommandQueue: # Removed empty parenthesis
                     print("Resetting EKF...")
                     cf_manager.cf.param.set_value('kalman.resetEstimation', '1') 
                     self.mode = "INITIALIZING"
+                    self._init_start_time = time.time()
                     
                 elif cmd.action == DroneCmd.TAKEOFF:
                     cf_manager.cf.platform.send_arming_request(True)
@@ -123,13 +124,15 @@ class CommandQueue: # Removed empty parenthesis
 
     def _update_state_machine(self, cf_manager):
         """Handles continuous tasks based on the active mode"""
+        
+        now = time.time()
+        
         if self.mode == "HL_BUSY":
-            if time.time() >= self._hl_end_time:
+            if now >= self._hl_end_time:
                 self.mode = "IDLE"
                 print("High-level maneuver complete.")
         
         elif self.mode == "TRAJECTORY": # TRAJECTORY MODE
-            now = time.time()
             
             # Check if it's time for the next waypoint
             if now >= self.traj_next_step_time and self.traj_step_index < len(self.current_trajectory):
@@ -150,6 +153,10 @@ class CommandQueue: # Removed empty parenthesis
                 print("Trajectory arc complete.")
                 
         elif self.mode == "INITIALIZING":
+            
+            if now - getattr(self, '_init_start_time', 0) < 2.0: 
+                return # Wait at least 2 seconds before checking EKF status
+            
             threshold = 0.001
 
             if (cf_manager._variance['x'] < threshold and 
