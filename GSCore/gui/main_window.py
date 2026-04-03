@@ -113,6 +113,7 @@ class QuasarGUI:
                 
             # 3. Safe to proceed
             self.cmd_queue.takeoff(height=1.0, duration=2.0)
+    
     def cb_land(self):
         if self.cmd_queue:
             self.cmd_queue.land(height=0.0, duration=2.0)
@@ -182,7 +183,7 @@ class QuasarGUI:
         # 3. Calculate new positions for the active drones
         # Note: You will need to pull your list of active drones here. 
         # For this example, let's assume you have 3 active drones.
-        active_drones = ["drone_1", "drone_2", "drone_3"] # TODO replace with self.swarm_queues.keys() or however you track active drones
+        active_drones = list(self.swarm_queues.keys()) # This should be a list of drone IDs that are currently active in the swarm
         num_drones = len(active_drones)
         
         if num_drones == 0: return
@@ -603,11 +604,16 @@ def test_gui():
 def start_gui(shared_state, command_queue=None, crazyflie=None):
     # Start the GUI on the main thread
     gui = QuasarGUI(shared_state, command_queue=command_queue)
+    
+    if command_queue:
+        gui.swarm_queues = {"Single UAV": command_queue} # allows test trajectories with a single agent
+    
     gui.setup_gui()
     gui.run() # This blocks and runs the while loop until you close the window
-if __name__ == '__main__':
+    
+    if __name__ == '__main__':
     # 1. Initialize Shared State
-    shared_state = SystemState()
+            shared_state = SystemState()
     
     # 2. Start Background Logging (Assuming 'cf' is your connected Crazyflie)
     # logger = TelemetryLogger(cf, shared_state)

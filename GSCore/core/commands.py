@@ -83,6 +83,9 @@ class CommandQueue: # Removed empty parenthesis
                 if cmd.action == DroneCmd.INITIALIZE:
                     print("Resetting EKF...")
                     cf_manager.cf.param.set_value('kalman.resetEstimation', '1') 
+                    time.sleep(0.1) # Short delay to ensure EKF reset command is processed
+                    cf_manager.cf.param.set_value('kalman.resetEstimation', '0') 
+                    
                     self.mode = "INITIALIZING"
                     self._init_start_time = time.time()
                     
@@ -175,6 +178,7 @@ class CommandQueue: # Removed empty parenthesis
                     
 
 # GUI ACCESSIBLE COMMAND METHODS
+
     def stop_and_hover(self):
         """Immediately clears all pending commands and halts the drone in place."""
         # 1. Wipe out any pending actions in the queue (Thread-safe)
