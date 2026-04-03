@@ -35,8 +35,9 @@ class CommandQueue: # Removed empty parenthesis
         self.mode = "IDLE"           
         self._hl_end_time = 0.0 # Fixed variable name
         self.kill = False
+        self.interrupt_hover = False
         
-        # --- NEW TRAJECTORY TRACKING ---
+        # --- TRAJECTORY TRACKING ---
         self.current_trajectory = []
         self.traj_step_index = 0
         self.traj_step_duration = 0.0
@@ -47,20 +48,27 @@ class CommandQueue: # Removed empty parenthesis
         while self.is_running:
             loop_start = time.time()
             
-            # Instant Kill Switch Override
+            # 1. Instant Kill Switch Override
             if self.kill:
                 cf_manager.cf.high_level_commander.stop() # Fixed self.cf_manager -> cf_manager
                 print("Emergency Stop Activated! Motors killed.")
                 self.is_running = False
                 break # Safely exits the thread loop
 
-            # 1. Process one-off commands from the GUI
+            # 2. Hardware Interrupt Catcher (prevent thread race conditions)
+            if getattr(self, 'interrupt_hover', False):
+                print("Interrupt recieved! Halting current Maneuver.")
+                cf_manager.cf.high_level_commander.stop() # Stop drone in place and hover
+                self.mode = "IDLE"                        # reset state machine
+                self.interrupt_hover = False              # clear flag
+            
+            # 3. Process one-off commands from the GUI
             self._check_queue(cf_manager)
 
-            # 2. Execute logic based on the current State
+            # 4. Execute logic based on the current State
             self._update_state_machine(cf_manager)
 
-            # 3. Maintain a strict 50Hz loop (20ms)
+            # 5. Maintain a strict 50Hz loop (20ms)
             elapsed = time.time() - loop_start
             time.sleep(max(0.0, 0.02 - elapsed))
 
@@ -109,6 +117,7 @@ class CommandQueue: # Removed empty parenthesis
                     self.mode = "TRAJECTORY"
                     self._hl_end_time = time.time() + cmd.duration
                     self.traj_next_step_time = time.time() # Start first point now  
+            
             except queue.Empty:
                 pass # Queue is empty, just keep flying
 
@@ -119,7 +128,7 @@ class CommandQueue: # Removed empty parenthesis
                 self.mode = "IDLE"
                 print("High-level maneuver complete.")
         
-        elif self.mode == "TRAJECTORY": #NEW TRAJECTORY MODE
+        elif self.mode == "TRAJECTORY": # TRAJECTORY MODE
             now = time.time()
             
             # Check if it's time for the next waypoint
@@ -174,7 +183,6 @@ class CommandQueue: # Removed empty parenthesis
         print("Takeoff command received from GUI.")
         self.command_queue.put(DroneCommand(action=DroneCmd.INITIALIZE))
         self.command_queue.put(DroneCommand(action=DroneCmd.TAKEOFF, height=height, duration=duration))
-        self.command_queue.put(DroneCommand(action=DroneCmd.HOVER, duration=duration))
     
     # Fixed height default to 0.0
     def land(self, height=0.0, duration=2.0):

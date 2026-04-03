@@ -2,7 +2,6 @@
 # Probably have seperate files for, plotting telemetry, sending commands, etc.
 
 import queue
-
 import dearpygui.dearpygui as dpg
 from collections import deque
 import math, time, threading
@@ -25,13 +24,16 @@ class QuasarGUI:
         self.time_data = deque(maxlen=self.max_points)
         self.logger = FlightLogger(self.state)
         
-        # Swarm Formation State NOTE: delete this if it fucks with the swarmCommander
+        #
+        
+        # Swarm Formation State NOTE: I think these are good
         self.swarm_radius = 1.0 # starting radius in meters
         self.swarm_z = 1.0      # starting altitude in meters
-        self.swarm_yaw = 0.0    # starting yaw in degrees 
-        #NOTE: This probably doesn't belong here, consider moving it to the swarm commander
+        self.swarm_yaw = 0.0    # starting yaw in degrees
+         
+        #NOTE: Inject { "cf_1": queue, "cf_2": queue } here
         self.swarm_queues = {} # This should be populated with the individual CommandQueues for each drone in the swarm, keyed by drone ID. Example: {"drone_1": CommandQueue(), "drone_2": CommandQueue(), ...}
-        # auto-generated the comment above so it might be cappin
+        
         
         # Definition of all charted variables, their groups, and plots
         # Keys = Chart Names, Values = The exact keys from your get_snapshot()
@@ -53,6 +55,7 @@ class QuasarGUI:
         for groups in self.plot_config.values():
             for var_list in groups.values():
                 self.tracked_vars.extend(var_list)
+        
         # Generate buffers for each variable
         self.history = {var: deque(maxlen=self.max_points) for var in self.tracked_vars}
         
@@ -95,11 +98,21 @@ class QuasarGUI:
     # GUI Button Callbacks for Commands
     # ==========================================
     def cb_takeoff(self):
-        print("takeoff 1")
         if self.cmd_queue:
-            print("takeoff 2")
-            self.cmd_queue.takeoff(height=1.0, duration=2.0)
+            # 1. Grab the latest telemetry snapshot
+            snap = self.state.get_snapshot()
             
+            # 2. SAFETY INTERLOCK: Check if already airborne
+            if snap.get('flying', False):
+                print("SAFETY: Takeoff ignored. UAV is already in the air!")
+                
+                # Make the UI pop up a warning text
+                if dpg.does_item_exist("status_armed"):
+                    dpg.configure_item("status_armed", color=(255, 150, 0)) # Flash orange
+                return
+                
+            # 3. Safe to proceed
+            self.cmd_queue.takeoff(height=1.0, duration=2.0)
     def cb_land(self):
         if self.cmd_queue:
             self.cmd_queue.land(height=0.0, duration=2.0)
@@ -169,7 +182,7 @@ class QuasarGUI:
         # 3. Calculate new positions for the active drones
         # Note: You will need to pull your list of active drones here. 
         # For this example, let's assume you have 3 active drones.
-        active_drones = ["drone_1", "drone_2", "drone_3"] 
+        active_drones = ["drone_1", "drone_2", "drone_3"] # TODO replace with self.swarm_queues.keys() or however you track active drones
         num_drones = len(active_drones)
         
         if num_drones == 0: return

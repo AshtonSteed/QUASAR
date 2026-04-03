@@ -42,7 +42,7 @@ def print_worker(pose_queue):
 # Create a motive listener thread to receive data
 def start_motive_stream(pose_queue: queue.Queue, shared_state: SystemState = None):
     # This callback function is called every time Motive sends new data
-   
+
     print("Connecting to Motive...")
     
 
