@@ -16,9 +16,9 @@ def start_testbed():
 
     # 1. Define Swarm Configuration
     swarm_config = [
-        {"id": "CF_1", "uri": "radio://0/110/2M/E7E7E7E701", "motive_id": 1},
-        {"id": "CF_2", "uri": "radio://0/110/2M/E7E7E7E702", "motive_id": 2},
-        {"id": "CF_3", "uri": "radio://0/110/2M/E7E7E7E703", "motive_id": 3},
+        {"id": "CF_1", "uri": "radio://0/110/1M/E7E7E7E701", "motive_id": 1},
+        {"id": "CF_2", "uri": "radio://0/110/1M/E7E7E7E702", "motive_id": 2},
+        {"id": "CF_3", "uri": "radio://0/110/1M/E7E7E7E703", "motive_id": 3},
     ]
     
     # 2. Instantiate Agents
