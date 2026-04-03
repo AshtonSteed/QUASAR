@@ -25,6 +25,13 @@ class QuasarGUI:
         self.time_data = deque(maxlen=self.max_points)
         self.logger = FlightLogger(self.state)
         
+        # Swarm Formation State NOTE: delete this if it fucks with the swarmCommander
+        self.swarm_radius = 1.0 # starting radius in meters
+        self.swarm_z = 1.0      # starting altitude in meters
+        self.swarm_yaw = 0.0    # starting yaw in degrees 
+        #NOTE: This probably doesn't belong here, consider moving it to the swarm commander
+        self.swarm_queues = {} # This should be populated with the individual CommandQueues for each drone in the swarm, keyed by drone ID. Example: {"drone_1": CommandQueue(), "drone_2": CommandQueue(), ...}
+        # auto-generated the comment above so it might be cappin
         
         # Definition of all charted variables, their groups, and plots
         # Keys = Chart Names, Values = The exact keys from your get_snapshot()
@@ -111,15 +118,7 @@ class QuasarGUI:
         if self.cmd_queue:
             self.cmd_queue.emergency_stop()
             print("EMERGENCY STOP: Flight Aborted and Motors Deactivated.")
-            
-    def cb_manual_goto(self):
-        """One-off point jump using the goto() method in commands.py."""
-        if self.cmd_queue:
-            x, y, z = dpg.get_value("input_man_pos")
-            yaw = dpg.get_value("input_man_yaw")
-            dur = dpg.get_value("input_man_dur")
-            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=dur)
-
+        
     def cb_reload_trajectories(self):
         """Scans the trajectories folder using an absolute path relative to the project root."""
         # 1. Get the directory where THIS script (main_window.py) is located
@@ -148,6 +147,66 @@ class QuasarGUI:
                 
         print(f"Playbook scan complete. Folder: {traj_dir}")
         print(f"Found {len(file_names)} files: {file_names}")
+    
+    def cb_nudge_swarm(self, axis, amount):
+        """Updates the formation state and physically moves the hovering drones."""
+        # 1. Update the internal state
+        if axis == "z":
+            self.swarm_z += amount
+            self.swarm_z = max(0.2, self.swarm_z) # Hard deck limit: Don't crash into the floor
+        elif axis == "scale":
+            self.swarm_radius += amount
+            self.swarm_radius = max(0.4, self.swarm_radius) # Minimum safe distance limit
+        elif axis == "yaw":
+            self.swarm_yaw = (self.swarm_yaw + amount) % 360
+            
+        print(f"Formation Update -> Radius: {self.swarm_radius:.1f}m, Z: {self.swarm_z:.1f}m, Yaw: {self.swarm_yaw:.1f}deg")
+        
+        # 2. Get the Swarm Center
+        center = dpg.get_value("input_swarm_center")
+        cx, cy = center[0], center[1]
+
+        # 3. Calculate new positions for the active drones
+        # Note: You will need to pull your list of active drones here. 
+        # For this example, let's assume you have 3 active drones.
+        active_drones = ["drone_1", "drone_2", "drone_3"] 
+        num_drones = len(active_drones)
+        
+        if num_drones == 0: return
+
+        phase_separation = 360.0 / num_drones
+
+        for index, drone_id in enumerate(active_drones):
+            # Calculate this drone's angle on the circle
+            drone_angle_deg = (index * phase_separation) + self.swarm_yaw
+            theta = math.radians(drone_angle_deg)
+            
+            # Geometry: X = Center + (Radius * Cos), Y = Center + (Radius * Sin)
+            target_x = cx + (self.swarm_radius * math.cos(theta))
+            target_y = cy + (self.swarm_radius * math.sin(theta))
+            target_z = self.swarm_z
+            
+            # Point the nose of the drone tangent to the circle (optional)
+            target_yaw = drone_angle_deg + 90.0
+            
+            # 4. Dispatch the GOTO command!
+            # Instead of a trajectory, we just send a 1.5s straight-line move
+            if drone_id in self.swarm_queues:
+                self.swarm_queues[drone_id].goto(
+                    x=target_x, 
+                    y=target_y, 
+                    z=target_z, 
+                    yaw=target_yaw, 
+                    duration=1.5
+                )
+
+    def cb_manual_goto(self):
+        """One-off point jump using the goto() method in commands.py."""
+        if self.cmd_queue:
+            x, y, z = dpg.get_value("input_man_pos")
+            yaw = dpg.get_value("input_man_yaw")
+            dur = dpg.get_value("input_man_dur")
+            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=dur)
 
     def cb_goto(self):
         """Reads the selected JSON, applies real-world spatial offset (X, Y, and Z) & rotation, and executes."""
@@ -175,59 +234,46 @@ class QuasarGUI:
                 return
 
             # ==========================================
-            # FULL 3D TRANSLATION & SWARM ROTATION
+            # FIXED-ORIGIN SWARM ROTATION & PLACEMENT
             # ==========================================
             
-            # 1. Get the physical start point from Mocap
-            with self.state.lock:
-                actual_start_x = self.state.estimate_pose.x
-                actual_start_y = self.state.estimate_pose.y
-                actual_start_z = self.state.estimate_pose.z 
+            # 1. Get the Mission Center from the GUI input box
+            mission_center = dpg.get_value("input_swarm_center")
+            cx = mission_center[0]
+            cy = mission_center[1]
+            cz = mission_center[2]
             
-            # 2. Get the trajectory's designed start position
-            designed_start_x = raw_waypoints[0][0]
-            designed_start_y = raw_waypoints[0][1]
-            designed_start_z = raw_waypoints[0][2]      
-            
-            # Calculate the Z altitude offset
-            offset_z = actual_start_z - designed_start_z 
-            
-            # 3. Get the Swarm Rotation offset and convert to radians
-            swarm_yaw_deg = dpg.get_value("input_swarm_yaw")
-            theta = math.radians(swarm_yaw_deg)
+            # 2. Get the Swarm Rotation from your live D-Pad state
+            theta = math.radians(self.swarm_yaw)
             
             translated_waypoints = []
             
             for wp in raw_waypoints:
-                # A. Shift the designed path so its start point is at (0,0)
-                dx = wp[0] - designed_start_x
-                dy = wp[1] - designed_start_y
+                # A. Rotate the raw playbook X and Y around (0,0)
+                rot_x = (wp[0] * math.cos(theta)) - (wp[1] * math.sin(theta))
+                rot_y = (wp[0] * math.sin(theta)) + (wp[1] * math.cos(theta))
                 
-                # B. Apply 2D Rotation Matrix to the X/Y coordinates
-                rot_x = (dx * math.cos(theta)) - (dy * math.sin(theta))
-                rot_y = (dx * math.sin(theta)) + (dy * math.cos(theta))
+                # B. Translate (Shift) the rotated shape to the chosen Mission Center
+                new_x = rot_x + cx
+                new_y = rot_y + cy
                 
-                # C. Translate the rotated point to the drone's physical Mocap location
-                new_x = actual_start_x + rot_x
-                new_y = actual_start_y + rot_y
+                # C. Apply the Altitude (Playbook Z + Center Z)
+                new_z = wp[2] + cz 
                 
-                # D. Apply the Z offset so the shape floats at the drone's current altitude
-                new_z = wp[2] + offset_z # <-- NEW: Shift the playbook up/down
-                
-                # E. Apply Yaw to the drone's nose
+                # D. Rotate the drone's nose
                 designed_yaw = wp[3] if len(wp) > 3 else 0.0
-                new_yaw = designed_yaw + theta
+                new_yaw = designed_yaw + self.swarm_yaw
                 
                 # Format for CommandQueue: (X, Y, Z, Yaw)
                 translated_waypoints.append((new_x, new_y, new_z, new_yaw))
                 
             # ==========================================
             
-            # Send the safely translated/rotated points to the 50Hz state machine
+            # Hand off the completely calculated absolute path to the Drone's Queue
             self.cmd_queue.execute_trajectory(translated_waypoints, duration)
-            print(f"Executing playbook: {data.get('name', file_name)} (Swarm Offset: {swarm_yaw_deg} deg)")
-            print(f"Applied Offsets -> X: {actual_start_x-designed_start_x:+.2f}m, Y: {actual_start_y-designed_start_y:+.2f}m, Z: {offset_z:+.2f}m")
             
+            print(f"Executing playbook: {data.get('name', file_name)}")
+            print(f"Mission Center -> X: {cx:.2f}m, Y: {cy:.2f}m, Z: {cz:.2f}m | Swarm Yaw: {self.swarm_yaw:.1f} deg")    
         except Exception as e:
             import traceback
             print(f"Failed to load trajectory file: {e}")
@@ -331,32 +377,43 @@ class QuasarGUI:
 
                 dpg.add_spacer(width=30)
 
-                # High-Level Trajectory Playbook Loader
+                # ==========================================
+                # TRAJECTORY PLAYBOOK & SWARM CONTROLS
+                # ==========================================
                 with dpg.group():
-                    dpg.add_text("Trajectory Playbook", color=(200, 200, 200))
+                    dpg.add_text("Swarm Formation Controls", color=(200, 200, 200))
                     
-                    # Row 1: File Selection & Swarm Offset
+                    # Row 1: Altitude & Scale
                     with dpg.group(horizontal=True):
-                        dpg.add_text("Select Path:")
+                        dpg.add_button(label="^ RAISE", width=80, callback=lambda: self.cb_nudge_swarm("z", 0.2))
+                        dpg.add_button(label="v LOWER", width=80, callback=lambda: self.cb_nudge_swarm("z", -0.2))
+                        dpg.add_spacer(width=10)
+                        dpg.add_button(label="< > SPREAD", width=80, callback=lambda: self.cb_nudge_swarm("scale", 0.2))
+                        dpg.add_button(label="> < CLUSTER", width=80, callback=lambda: self.cb_nudge_swarm("scale", -0.2))
+                        
+                    # Row 2: Rotation & Center
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(label="↺ ROTATE CCW", width=80, callback=lambda: self.cb_nudge_swarm("yaw", 15.0))
+                        dpg.add_button(label="↻ ROTATE CW", width=80, callback=lambda: self.cb_nudge_swarm("yaw", -15.0))
+                        dpg.add_spacer(width=10)
+                        dpg.add_input_floatx(size=3,label="Center (X,Y,Z)", tag="input_swarm_center", default_value=[0.0, 0.0, 0.0], width=150)
+
+                    dpg.add_spacer(height=10)
+                    
+                    # Row 3: Playbook Execution
+                    dpg.add_text("Mission Execution", color=(200, 200, 200))
+                    with dpg.group(horizontal=True):
                         dpg.add_combo(items=[], tag="input_traj_file", width=150)
                         dpg.add_button(label="RELOAD", callback=self.cb_reload_trajectories)
-                        
-                        dpg.add_text("  Swarm Yaw Offset (deg):")
-                        dpg.add_input_float(tag="input_swarm_yaw", default_value=0.0, width=80, step=15.0)
-
-                    # Row 2: The Execute Button
-                    dpg.add_spacer(height=5)
-                    with dpg.group(horizontal=True):
-                        dpg.add_button(label="EXECUTE TRAJECTORY", tag="btn_execute", width=250, height=30, callback=self.cb_goto)
-                        
-                        # Apply visual theme to the Execute button safely using its tag
-                        with dpg.theme() as exec_theme:
-                            with dpg.theme_component(dpg.mvButton):
-                                dpg.add_theme_color(dpg.mvThemeCol_Button, (40, 150, 40)) # Greenish
-                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (50, 200, 50))
-                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (30, 120, 30))
-                        dpg.bind_item_theme("btn_execute", exec_theme)
-                        
+                    
+                    dpg.add_button(label="EXECUTE TRAJECTORY", tag="btn_execute", width=-1, height=35, callback=self.cb_goto)
+                    with dpg.theme() as exec_theme:
+                        with dpg.theme_component(dpg.mvButton):
+                            dpg.add_theme_color(dpg.mvThemeCol_Button, (40, 150, 40)) # Greenish
+                            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (50, 200, 50))
+                            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (30, 120, 30))
+                    dpg.bind_item_theme("btn_execute", exec_theme)
+                    
             dpg.add_separator()
             dpg.add_spacer(height=10)
             
