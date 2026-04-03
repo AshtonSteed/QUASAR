@@ -367,6 +367,56 @@ class TrajectoryBuilderGUI:
             self.view_scale = max(2.0, self.view_scale)
             self.update_plots()
 
+    def scan_trajectories(self):
+        """Scans the trajectories folder and populates the load dropdown."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        save_dir = os.path.abspath(os.path.join(current_dir, 'trajectories'))
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Find all json files
+        files = [f for f in os.listdir(save_dir) if f.endswith('.json')]
+        
+        if dpg.does_item_exist("combo_load_file"):
+            dpg.configure_item("combo_load_file", items=files)
+            if files: 
+                dpg.set_value("combo_load_file", files[0])
+
+    def load_trajectory(self):
+        """Loads the selected JSON file and rebuilds the UI state."""
+        filename = dpg.get_value("combo_load_file")
+        if not filename: return
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(current_dir, 'trajectories', filename)
+        
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                
+            # 1. Restore the segment definitions (the math instructions)
+            self.segments = data.get("segment_definitions", [])
+            
+            # 2. Fast-forward the segment ID counter so new additions don't collide
+            if self.segments:
+                self.segment_counter = max(seg["id"] for seg in self.segments)
+            else:
+                self.segment_counter = 0
+                
+            # 3. Update the export text boxes at the bottom
+            if dpg.does_item_exist("input_filename"):
+                dpg.set_value("input_filename", filename)
+            if dpg.does_item_exist("input_traj_name"):
+                dpg.set_value("input_traj_name", data.get("name", "Loaded Path"))
+                
+            # 4. Trigger the UI to rebuild itself and recalculate the 3D plot
+            self.refresh_segment_ui()
+            
+            if dpg.does_item_exist("lbl_save_status"):
+                dpg.set_value("lbl_save_status", f"Loaded {filename}!")
+                
+        except Exception as e:
+            print(f"Failed to load {filename}: {e}")
+
     def save_trajectory(self):
         self.sync_ui_to_state()
         
@@ -413,6 +463,14 @@ class TrajectoryBuilderGUI:
             with dpg.group(horizontal=True):
                 
                 with dpg.child_window(width=400):
+                    
+                    dpg.add_text("0. Load Existing Playbook", color=(200,200,200))
+                    with dpg.group(horizontal=True):
+                        dpg.add_combo(items=[], tag="combo_load_file", width=180)
+                        dpg.add_button(label="SCAN", callback=self.scan_trajectories)
+                        dpg.add_button(label="LOAD", callback=self.load_trajectory)
+                    dpg.add_separator()
+                    
                     dpg.add_text("1. Absolute Start Point", color=(200,200,200))
                     with dpg.group(horizontal=True):
                         dpg.add_input_float(label="X", default_value=0.0, tag="start_x", width=80)
@@ -458,6 +516,7 @@ class TrajectoryBuilderGUI:
         dpg.setup_dearpygui()
         dpg.show_viewport()
         
+        self.scan_trajectories()  # Populate load dropdown on startup
         self.update_plots()
         
         dpg.start_dearpygui()
