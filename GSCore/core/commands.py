@@ -158,6 +158,15 @@ class CommandQueue: # Removed empty parenthesis
                     )
                     
 
+# GUI ACCESSIBLE COMMAND METHODS
+    def stop_and_hover(self):
+        """Immediately clears all pending commands and halts the drone in place."""
+        # 1. Wipe out any pending actions in the queue (Thread-safe)
+        with self.command_queue.mutex:
+            self.command_queue.queue.clear()
+        # 2. Trigger the hardware interrupt on the next 50Hz loop tick
+        self.interrupt_hover = True
+        
     def emergency_stop(self):
         self.kill_motors()
         
@@ -179,6 +188,8 @@ class CommandQueue: # Removed empty parenthesis
         
     def execute_trajectory(self, waypoints, total_duration):
         """Helper to push the trajectory into the queue"""
+        self.stop_and_hover() # Clear out any existing commands to ensure a clean trajectory start
+        
         self.command_queue.put(DroneCommand(
             action=DroneCmd.TRAJECTORY, 
             waypoints=waypoints, 

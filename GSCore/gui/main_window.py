@@ -6,11 +6,12 @@ import queue
 import dearpygui.dearpygui as dpg
 from collections import deque
 import math, time, threading
+import os, glob, json
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
-from GSCore.core.trajectory_math import TrajectoryGenerator
+from GSCore.tools.trajectory_math import TrajectoryGenerator
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from GSCore.data.logger import FlightLogger
 from common_classes import SystemState
@@ -117,60 +118,118 @@ class QuasarGUI:
             self.cmd_queue.goto(x, y, z, yaw=yaw, duration=segment_duration, linear=True)
             time.sleep(segment_duration)
 
+    def cb_reload_trajectories(self):
+        """Scans the trajectories folder using an absolute path relative to the project root."""
+        # 1. Get the directory where THIS script (main_window.py) is located
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # 2. Go up two levels (from GSCore/gui/ to the root QUASAR/ folder)
+        project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+        
+        # 3. Join with the trajectories folder name
+        traj_dir = os.path.join(project_root, "trajectories")
+        
+        # 4. Failsafe: create the directory if it doesn't exist
+        os.makedirs(traj_dir, exist_ok=True) 
+        
+        # 5. Look for .json files inside that specific absolute path
+        file_paths = glob.glob(os.path.join(traj_dir, "*.json"))
+        file_names = [os.path.basename(f) for f in file_paths]
+        
+        # 6. Update the DearPyGui Dropdown
+        if dpg.does_item_exist("input_traj_file"):
+            dpg.configure_item("input_traj_file", items=file_names)
+            if file_names:
+                dpg.set_value("input_traj_file", file_names[0])
+            else:
+                dpg.set_value("input_traj_file", "") # Clear if folder is empty
+                
+        print(f"Playbook scan complete. Folder: {traj_dir}")
+        print(f"Found {len(file_names)} files: {file_names}")
+
     def cb_goto(self):
+        """Reads the selected JSON, applies real-world spatial offset (X, Y, and Z) & rotation, and executes."""
         if not self.cmd_queue: return
         
-        # 1. Read standard Target/Timing inputs
-        tgt_x = dpg.get_value("input_goto_x")
-        tgt_y = dpg.get_value("input_goto_y")
-        tgt_z = dpg.get_value("input_goto_z")
-        tgt_duration = dpg.get_value("input_goto_time")
+        file_name = dpg.get_value("input_traj_file")
+        if not file_name:
+            print("ERROR: No trajectory selected!")
+            return
             
-        # 2. Read Trajectory-specific inputs
-        traj_type = dpg.get_value("input_traj_type")
-        n_waypoints = dpg.get_value("input_n_waypoints")
+        # Robust pathing to the project root
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+        filepath = os.path.join(project_root, "trajectories", file_name)
         
-        # Ensure N is at least 2, creating a real path
-        if n_waypoints < 2: 
-            n_waypoints = 2
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                
+            raw_waypoints = data["waypoints"]
+            duration = data["total_duration"]
             
-        # 3. Start Point (P0), current position from shared state 
-        with self.state.lock:
-            start_pos = (
-                self.state.estimate_pose.x, 
-                self.state.estimate_pose.y, 
-                self.state.estimate_pose.z, 
-                0.0 # Default starting yaw
-            )
+            if not raw_waypoints:
+                print("ERROR: Trajectory file contains no waypoints.")
+                return
+
+            # ==========================================
+            # FULL 3D TRANSLATION & SWARM ROTATION
+            # ==========================================
             
-        # 4. Route to correct trajectory generator based on dropdown  
-        if traj_type == "Linear":
-            target_pos = (tgt_x, tgt_y, tgt_z, 0.0)
-            waypoints = TrajectoryGenerator.linear(start_pos, target_pos, n_waypoints)
+            # 1. Get the physical start point from Mocap
+            with self.state.lock:
+                actual_start_x = self.state.estimate_pose.x
+                actual_start_y = self.state.estimate_pose.y
+                actual_start_z = self.state.estimate_pose.z 
             
-        elif traj_type == "Helical":
-            radius = dpg.get_value("input_radius")
-            sweep_angle = dpg.get_value("input_sweep")
-            center = (tgt_x, tgt_y)
+            # 2. Get the trajectory's designed start position
+            designed_start_x = raw_waypoints[0][0]
+            designed_start_y = raw_waypoints[0][1]
+            designed_start_z = raw_waypoints[0][2]      
             
-            waypoints = TrajectoryGenerator.helical(
-                start_pos, center, radius, sweep_angle, tgt_z, n_waypoints
-            )
+            # Calculate the Z altitude offset
+            offset_z = actual_start_z - designed_start_z 
             
-        # 5. Calculate pacing and spawn the thread
-        segment_duration = tgt_duration / n_waypoints
-        
-        self.cancel_trajectory = True
-        if self.trajectory_thread and self.trajectory_thread.is_alive():
-            self.trajectory_thread.join(timeout=0.1)
+            # 3. Get the Swarm Rotation offset and convert to radians
+            swarm_yaw_deg = dpg.get_value("input_swarm_yaw")
+            theta = math.radians(swarm_yaw_deg)
             
-        self.cancel_trajectory = False
-        self.trajectory_thread = threading.Thread(
-            target=self._stream_waypoints,
-            args=(waypoints, segment_duration),
-            daemon=True
-        )
-        self.trajectory_thread.start()
+            translated_waypoints = []
+            
+            for wp in raw_waypoints:
+                # A. Shift the designed path so its start point is at (0,0)
+                dx = wp[0] - designed_start_x
+                dy = wp[1] - designed_start_y
+                
+                # B. Apply 2D Rotation Matrix to the X/Y coordinates
+                rot_x = (dx * math.cos(theta)) - (dy * math.sin(theta))
+                rot_y = (dx * math.sin(theta)) + (dy * math.cos(theta))
+                
+                # C. Translate the rotated point to the drone's physical Mocap location
+                new_x = actual_start_x + rot_x
+                new_y = actual_start_y + rot_y
+                
+                # D. Apply the Z offset so the shape floats at the drone's current altitude
+                new_z = wp[2] + offset_z # <-- NEW: Shift the playbook up/down
+                
+                # E. Apply Yaw to the drone's nose
+                designed_yaw = wp[3] if len(wp) > 3 else 0.0
+                new_yaw = designed_yaw + theta
+                
+                # Format for CommandQueue: (X, Y, Z, Yaw)
+                translated_waypoints.append((new_x, new_y, new_z, new_yaw))
+                
+            # ==========================================
+            
+            # Send the safely translated/rotated points to the 50Hz state machine
+            self.cmd_queue.execute_trajectory(translated_waypoints, duration)
+            print(f"Executing playbook: {data.get('name', file_name)} (Swarm Offset: {swarm_yaw_deg} deg)")
+            print(f"Applied Offsets -> X: {actual_start_x-designed_start_x:+.2f}m, Y: {actual_start_y-designed_start_y:+.2f}m, Z: {offset_z:+.2f}m")
+            
+        except Exception as e:
+            import traceback
+            print(f"Failed to load trajectory file: {e}")
+            traceback.print_exc()
         
         
     def cb_log(self):
@@ -261,47 +320,31 @@ class QuasarGUI:
 
                 dpg.add_spacer(width=30)
 
-                # High-Level Trajectory Command Inputs
+                # High-Level Trajectory Playbook Loader
                 with dpg.group():
-                    dpg.add_text("Trajectory Command Setup", color=(200, 200, 200))
+                    dpg.add_text("Trajectory Playbook", color=(200, 200, 200))
                     
-                    # Row 1: Target Coordinates
+                    # Row 1: File Selection & Swarm Offset
                     with dpg.group(horizontal=True):
-                        dpg.add_text("X:")
-                        dpg.add_input_float(tag="input_goto_x", default_value=0.0, width=90, step=0.1)
-                        dpg.add_text("Y:")
-                        dpg.add_input_float(tag="input_goto_y", default_value=0.0, width=90, step=0.1)
-                        dpg.add_text("Z:")
-                        dpg.add_input_float(tag="input_goto_z", default_value=1.0, width=90, step=0.1)
-                    
-                    # Row 2: General Flight Parameters
-                    with dpg.group(horizontal=True):
-                        dpg.add_text("Type:")
-                        dpg.add_combo(items=["Linear", "Helical"], default_value="Linear", tag="input_traj_type", width=100)
-                        dpg.add_text("Time(s):")
-                        dpg.add_input_float(tag="input_goto_time", default_value=3.0, width=90, step=0.5)
-                        dpg.add_text("N-Pts:")
-                        dpg.add_input_int(tag="input_n_waypoints", default_value=15, width=90, step=1)
+                        dpg.add_text("Select Path:")
+                        dpg.add_combo(items=[], tag="input_traj_file", width=150)
+                        dpg.add_button(label="RELOAD", callback=self.cb_reload_trajectories)
                         
-                    # Row 3: Helical-Specific Parameters
-                    with dpg.group(horizontal=True):
-                        dpg.add_text("Radius (m):")
-                        dpg.add_input_float(tag="input_radius", default_value=1.0, width=90, step=0.1)
-                        dpg.add_text("Sweep (rad):")
-                        dpg.add_input_float(tag="input_sweep", default_value=3.14, width=90, step=0.1)
+                        dpg.add_text("  Swarm Yaw Offset (deg):")
+                        dpg.add_input_float(tag="input_swarm_yaw", default_value=0.0, width=80, step=15.0)
 
-                    # Row 4: The Execute Button
+                    # Row 2: The Execute Button
                     dpg.add_spacer(height=5)
                     with dpg.group(horizontal=True):
-                        dpg.add_button(label="EXECUTE TRAJECTORY", width=250, height=30, callback=self.cb_goto)
+                        dpg.add_button(label="EXECUTE TRAJECTORY", tag="btn_execute", width=250, height=30, callback=self.cb_goto)
                         
-                        # Add a visual theme to the Execute button
+                        # Apply visual theme to the Execute button safely using its tag
                         with dpg.theme() as exec_theme:
                             with dpg.theme_component(dpg.mvButton):
                                 dpg.add_theme_color(dpg.mvThemeCol_Button, (40, 150, 40)) # Greenish
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (50, 200, 50))
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (30, 120, 30))
-                        dpg.bind_item_theme(dpg.last_item(), exec_theme)
+                        dpg.bind_item_theme("btn_execute", exec_theme)
                         
             dpg.add_separator()
             dpg.add_spacer(height=10)
@@ -351,6 +394,9 @@ class QuasarGUI:
                             
                     dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
 
+        # Populate the trajectory dropdown on startup
+        self.cb_reload_trajectories() 
+        
         dpg.create_viewport(title='QUASAR Testbed', width=1250, height=850)
 
         dpg.setup_dearpygui()
