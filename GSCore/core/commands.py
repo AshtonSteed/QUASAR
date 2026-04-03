@@ -190,8 +190,22 @@ class CommandQueue: # Removed empty parenthesis
         """Helper to push the trajectory into the queue"""
         self.stop_and_hover() # Clear out any existing commands to ensure a clean trajectory start
         
+        if not waypoints: return # Guard against empty trajectories
+        
+        # 2. Transition to start of trajectory playbook
+        start_wp = waypoints[0]
+        transition_duration = 5.0 # Fixed transition duration for smoothness
+        self.goto(
+            x=start_wp[0], 
+            y=start_wp[1],
+            z=start_wp[2],
+            yaw=start_wp[3],
+            duration = transition_duration
+        )
         self.command_queue.put(DroneCommand(
             action=DroneCmd.TRAJECTORY, 
             waypoints=waypoints, 
             duration=total_duration
         ))   
+        #NOTE: not the spot for this maybe?
+        print(f"Transitioning to start and beginning playbook execution. Total waypoints: {len(waypoints)}, Total duration: {total_duration}s")

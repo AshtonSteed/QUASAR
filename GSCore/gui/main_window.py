@@ -96,7 +96,13 @@ class QuasarGUI:
     def cb_land(self):
         if self.cmd_queue:
             self.cmd_queue.land(height=0.0, duration=2.0)
-
+            
+    def cb_stop_hover(self):
+        # Kill trajectory and hover in place
+        if self.cmd_queue:
+            self.cmd_queue.stop_and_hover()
+            print("STOP HOVER: Trajectory aborted, hovering at current position.")
+            
     def cb_emergency_stop(self):
         # 1. Kill any active trajectory stream in GUI
         self.cancel_trajectory = True
@@ -105,18 +111,14 @@ class QuasarGUI:
         if self.cmd_queue:
             self.cmd_queue.emergency_stop()
             print("EMERGENCY STOP: Flight Aborted and Motors Deactivated.")
-
-    def _stream_waypoints(self, waypoints, segment_duration):
-        """This runs in the background. It won't freeze your buttons!"""
-        for i, wp in enumerate(waypoints):
-            if self.cancel_trajectory:
-                print("Aborting stream.")
-                break
-                
-            x, y, z, yaw = wp
-            # The 'linear=True' is key for the Crazyflie high-level commander
-            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=segment_duration, linear=True)
-            time.sleep(segment_duration)
+            
+    def cb_manual_goto(self):
+        """One-off point jump using the goto() method in commands.py."""
+        if self.cmd_queue:
+            x, y, z = dpg.get_value("input_man_pos")
+            yaw = dpg.get_value("input_man_yaw")
+            dur = dpg.get_value("input_man_dur")
+            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=dur)
 
     def cb_reload_trajectories(self):
         """Scans the trajectories folder using an absolute path relative to the project root."""
@@ -307,15 +309,24 @@ class QuasarGUI:
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="TAKEOFF", width=100, height=40, callback=self.cb_takeoff)
                         dpg.add_button(label="LAND", width=100, height=40, callback=self.cb_land)
-                        dpg.add_button(label="EMERGENCY STOP", width=150, height=40, callback=self.cb_emergency_stop)
+                        hover_button = dpg.add_button(label="HOVER", width=100, height=40, callback=self.cb_stop_hover)
+                        emergency_button = dpg.add_button(label="EMERGENCY STOP", width=150, height=40, callback=self.cb_emergency_stop)
                         
-                        # Bind a theme specifically to the Kill Switch to make it bright red
+                        # Bind a theme specifically to the HOVER button (yellow)
+                        with dpg.theme() as hover_theme:
+                            with dpg.theme_component(dpg.mvButton):
+                                dpg.add_theme_color(dpg.mvThemeCol_Button, (220, 180, 0))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (255, 220, 80))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (180, 140, 0))
+                        dpg.bind_item_theme(hover_button, hover_theme)
+
+                        # Bind a theme specifically to the EMERGENCY STOP button (red)
                         with dpg.theme() as kill_theme:
                             with dpg.theme_component(dpg.mvButton):
                                 dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 40, 40))
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (255, 50, 50))
                                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (150, 30, 30))
-                        dpg.bind_item_theme(dpg.last_item(), kill_theme)
+                        dpg.bind_item_theme(emergency_button, kill_theme)
                     
 
                 dpg.add_spacer(width=30)
