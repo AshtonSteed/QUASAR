@@ -83,11 +83,8 @@ class CommandQueue: # Removed empty parenthesis
                 if cmd.action == DroneCmd.INITIALIZE:
                     print("Resetting EKF...")
                     cf_manager.cf.param.set_value('kalman.resetEstimation', '1') 
-                    time.sleep(0.1) # Short delay to ensure EKF reset command is processed
-                    cf_manager.cf.param.set_value('kalman.resetEstimation', '0') 
                     
                     self.mode = "INITIALIZING"
-                    self._init_start_time = time.time()
                     
                 elif cmd.action == DroneCmd.TAKEOFF:
                     cf_manager.cf.platform.send_arming_request(True)
@@ -156,9 +153,6 @@ class CommandQueue: # Removed empty parenthesis
                 print("Trajectory arc complete.")
                 
         elif self.mode == "INITIALIZING":
-            
-            if now - getattr(self, '_init_start_time', 0) < 2.0: 
-                return # Wait at least 2 seconds before checking EKF status
             
             threshold = 0.001
 
