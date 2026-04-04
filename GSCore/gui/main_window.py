@@ -27,8 +27,8 @@ class QuasarGUI:
         #
         
         # Swarm Formation State NOTE: I think these are good
-        self.swarm_radius = 1.0 # starting radius in meters
-        self.swarm_z = 1.0      # starting altitude in meters
+        self.swarm_radius = 0.05 # starting radius in meters
+        self.swarm_z = 0.7      # starting altitude in meters
         self.swarm_yaw = 0.0    # starting yaw in degrees
          
         #NOTE: Inject { "cf_1": queue, "cf_2": queue } here

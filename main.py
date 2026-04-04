@@ -29,7 +29,7 @@ def start_testbed():
     )
     uav_thread.start() # Test Crazyflie connection with mock data stream'''
     
-    uav_driver = connect_to_uav("radio://0/110/1M",
+    uav_driver = connect_to_uav("radio://0/110/1M/E7E7E7E701",
                                 pose_queue, 
                                 command_queue, 
                                 shared_state)
