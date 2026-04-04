@@ -200,10 +200,12 @@ class QuasarGUI:
         # ALWAYS kill everything in the swarm, regardless of dropdown selection
         self.cancel_trajectory = True
         
-        # 2. Send hardware halt command
-        if self.cmd_queue:
-            self.cmd_queue.emergency_stop()
-            print("EMERGENCY STOP: Flight Aborted and Motors Deactivated.")
+        # FIXED: Loop through all agents in the swarm dictionary
+        for a_id, agent in self.swarm_dict.items():
+            if hasattr(agent, 'command_queue'):
+                agent.command_queue.emergency_stop()
+                
+        print("EMERGENCY STOP: Flight Aborted and Motors Deactivated.")
         
     def cb_reload_trajectories(self):
         """Scans the trajectories folder using an absolute path relative to the project root."""
@@ -288,15 +290,18 @@ class QuasarGUI:
 
     def cb_manual_goto(self):
         """One-off point jump using the goto() method in commands.py."""
-        if self.cmd_queue:
-            x, y, z = dpg.get_value("input_man_pos")
-            yaw = dpg.get_value("input_man_yaw")
-            dur = dpg.get_value("input_man_dur")
-            self.cmd_queue.goto(x, y, z, yaw=yaw, duration=dur)
+        x, y, z = dpg.get_value("input_man_pos")
+        yaw = dpg.get_value("input_man_yaw")
+        dur = dpg.get_value("input_man_dur")
+        
+        # Dispatch to selected agents
+        for agent in self._get_target_agents():
+            agent.command_queue.goto(x, y, z, yaw=yaw, duration=dur)
 
     def cb_goto(self):
         """Reads the selected JSON, applies real-world spatial offset (X, Y, and Z) & rotation, and executes."""
-        if not self.cmd_queue: return
+        target_agents = self._get_target_agents()
+        if not target_agents: return
         
         file_name = dpg.get_value("input_traj_file")
         if not file_name:
@@ -356,7 +361,8 @@ class QuasarGUI:
             # ==========================================
             
             # Hand off the completely calculated absolute path to the Drone's Queue
-            self.cmd_queue.execute_trajectory(translated_waypoints, duration)
+            for agent in target_agents:
+                agent.command_queue.execute_trajectory(translated_waypoints, duration)
             
             print(f"Executing playbook: {data.get('name', file_name)}")
             print(f"Mission Center -> X: {cx:.2f}m, Y: {cy:.2f}m, Z: {cz:.2f}m | Swarm Yaw: {self.swarm_yaw:.1f} deg")    
@@ -565,53 +571,13 @@ class QuasarGUI:
 
         dpg.create_viewport(title='QUASAR Swarm Testbed', width=1250, height=850)
         
+        dpg.create_viewport(title='QUASAR Swarm Testbed', width=1250, height=850)
+        
+        # Handler registries can exist globally, so this stays
         with dpg.handler_registry():
             dpg.add_mouse_drag_handler(callback=self._on_mouse_drag)
             dpg.add_mouse_wheel_handler(callback=self._on_mouse_wheel)
             
-            with dpg.group(horizontal=True):
-                
-                # --- LEFT SIDE: SUBPLOTS ---
-                # width=-180 leaves exactly 180 pixels of space on the right
-                with dpg.group(width=-180):
-                    num_charts = len(self.plot_config)
-                    with dpg.subplots(num_charts, 1, label="Telemetry", width=-1, height=-1, link_all_x=True):
-                        
-                        for chart_name, groups in self.plot_config.items():
-                            with dpg.plot(label=chart_name):
-                                dpg.add_plot_legend()
-                                
-                                x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)")
-                                if not hasattr(self, 'master_x_axis'):
-                                    self.master_x_axis = x_axis 
-                                    
-                                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label=chart_name)
-                                dpg.set_axis_limits_auto(y_axis)
-                                
-                                for group_name, variables in groups.items():
-                                    for var in variables:
-                                        line_label = f"{group_name} {var.upper()}"
-                                        dpg.add_line_series(
-                                            [], [], 
-                                            label=line_label, tag=f"series_{var}", parent=y_axis
-                                        )
-
-                # --- RIGHT SIDE: TRACKBALL ---
-                # This drops perfectly into the 180-pixel gap we left on the right
-                with dpg.group():
-                    dpg.add_text("Orientation", color=(200, 200, 200))
-                    
-                    with dpg.drawlist(width=150, height=150):
-                        dpg.draw_rectangle([0,0], [150,150], color=[50,50,50], fill=[30,30,30])
-                        
-                        with dpg.draw_node(tag="trackball_node"):
-                            dpg.draw_line([0,0], [0,0], color=[255, 50, 50], thickness=3, tag="tb_x")
-                            dpg.draw_line([0,0], [0,0], color=[50, 255, 50], thickness=3, tag="tb_y")
-                            dpg.draw_line([0,0], [0,0], color=[50, 150, 255], thickness=3, tag="tb_z")
-                            
-                    dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
-
-        # Populate the trajectory dropdown on startup
         self.cb_reload_trajectories() 
         
         dpg.create_viewport(title='QUASAR Testbed', width=1250, height=850)
