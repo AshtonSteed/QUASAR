@@ -26,6 +26,7 @@ class DroneCommand:
     waypoints: list = None # For trajectory commands, list of (x,y,z,yaw) tuples
 
 class CommandQueue: # Removed empty parenthesis
+    
     def __init__(self):
         # Removed super().__init__()
         self.command_queue = queue.Queue()
@@ -222,3 +223,37 @@ class CommandQueue: # Removed empty parenthesis
         ))   
         #NOTE: not the spot for this maybe?
         print(f"Transitioning to start and beginning playbook execution. Total waypoints: {len(waypoints)}, Total duration: {total_duration}s")
+        
+        
+        
+
+#TODO: Class isnt used right now, GUI handles dispacting commands. 
+# This might be an unnecessary class, but ill leave it incase trajectories are tricky in the gui. 
+class SwarmCommandManager:
+    def __init__(self, swarm_dict):
+        self.swarm_dict = swarm_dict
+    
+    
+    def swarm_takeoff(self, height, duration): 
+        for agent in self.swarm_dict.values(): 
+            agent.command_queue.takeoff(height, duration)
+            
+    def swarm_land(self, height, duration):
+        for agent in self.swarm_dict.values(): 
+            agent.command_queue.land(height, duration)
+    
+    def swarm_kill(self):
+        for agent in self.swarm_dict.values(): 
+            agent.command_queue.kill_motors()
+      
+      
+    # TODO: Fix ts, goto is not in relative coordinates, all uavs will try to go to one spot      
+    '''def swarm_goto(self, x, y, z, yaw, duration, linear=False):
+        for agent in self.swarm_dict.values(): 
+            agent.command_queue.goto(x, y, z, yaw, duration, linear)'''
+            
+    def swarm_trajectory(self, waypoint_dict, total_duration):
+        # Waypoint dict is a dictionary mapping agent_id to a list of waypoints [(x,y,z,yaw), ...]
+        for agent in self.swarm_dict.values(): 
+            waypoints = waypoint_dict[agent.agent_id] # Extract the specific waypoints for this agent
+            agent.command_queue.execute_trajectory(waypoints, total_duration)

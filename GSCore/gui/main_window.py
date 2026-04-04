@@ -1,28 +1,21 @@
-# Whatever driver script is needed to display GUI 
-# Probably have seperate files for, plotting telemetry, sending commands, etc.
-
-import queue
 import dearpygui.dearpygui as dpg
 from collections import deque
 import math, time, threading
+import queue
 import os, glob, json
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
 from GSCore.core.trajectory_math import TrajectoryGenerator
-from GSCore.drivers.mock_motive_client import start_mock_stream
 from GSCore.data.logger import FlightLogger
 from common_classes import SystemState
 
 
 class QuasarGUI:
-    def __init__(self, shared_state, command_queue=None):
-        self.state = shared_state
-        self.cmd_queue = command_queue
+    def __init__(self, swarm_dict):
+        self.swarm_dict = swarm_dict
         self.max_points = 500
-        self.time_data = deque(maxlen=self.max_points)
-        self.logger = FlightLogger(self.state)
         
         #
         
@@ -34,9 +27,10 @@ class QuasarGUI:
         #NOTE: Inject { "cf_1": queue, "cf_2": queue } here
         self.swarm_queues = {} # This should be populated with the individual CommandQueues for each drone in the swarm, keyed by drone ID. Example: {"drone_1": CommandQueue(), "drone_2": CommandQueue(), ...}
         
+        # Flight logger now takes the whole swarm dictionary
+        self.logger = FlightLogger(self.swarm_dict) 
         
-        # Definition of all charted variables, their groups, and plots
-        # Keys = Chart Names, Values = The exact keys from your get_snapshot()
+        # Plot configurations
         self.plot_config = {
             "Position (m)": {
                 "Estimate": ['ex', 'ey', 'ez'],
@@ -50,57 +44,136 @@ class QuasarGUI:
             "Motor Commands": {
                 "Motors": ['m1', 'm2', 'm3', 'm4']}
         }
+        
         # Flat tracked variable list
         self.tracked_vars = []
         for groups in self.plot_config.values():
             for var_list in groups.values():
                 self.tracked_vars.extend(var_list)
-        
-        # Generate buffers for each variable
-        self.history = {var: deque(maxlen=self.max_points) for var in self.tracked_vars}
+                
+        # Generate nested buffers for EACH agent to prevent data loss when switching views
+        self.history = {
+            a_id: {var: deque(maxlen=self.max_points) for var in self.tracked_vars} 
+            for a_id in self.swarm_dict.keys()
+        }
+        self.time_data = {a_id: deque(maxlen=self.max_points) for a_id in self.swarm_dict.keys()}
+        self.last_t = {a_id: 0.0 for a_id in self.swarm_dict.keys()}
         
         # Trajectory Threading Variables
-        self.trajectory_thread = None
+        self.trajectory_threads = []
         self.cancel_trajectory = False
         
-    
-    def get_trackball_lines(self, quat, scale=50):
-        rot = Rotation.from_quat(quat)
-        rot_matrix = rot.as_matrix()
-        #Define our base 3D unit vectors (X: Forward, Y: Left, Z: Up)
-        axes = np.array([
-            [1, 0, 0], # X axis (Red)
-            [0, 1, 0], # Y axis (Green)
-            [0, 0, 1]  # Z axis (Blue)
-        ])
-        rotated_axes = axes @ rot_matrix.T
+        # Camera State for 3D View
+        self.cam_yaw = math.pi / 4       # 45 degrees default
+        self.cam_pitch = math.pi / 3     # 30 degrees default
+        self.cam_scale = 80              # Pixels per meter (Zoom)
+        self.cam_pan_x = 400             # Center X
+        self.cam_pan_y = 350             # Center Y
         
-        # Scale them up for the GUI, set up for gui
-        lines_2d = []
-        for axis in rotated_axes:
-            screen_x = axis[0] * scale
-            screen_y = -axis[2] * scale # Mapping 3D Z (Up) to Screen -Y (Up)
-            lines_2d.append([screen_x, screen_y])
+    def get_trackball_lines(self, quat, axis_length=0.4):
+            """Updated to sync perfectly with the camera's yaw, pitch, and zoom."""
+            rot = Rotation.from_quat(quat)
+            rot_matrix = rot.as_matrix()
             
-        return lines_2d # Returns endpoints for the X, Y, and Z lines
-    def _toggle_visibility(self, sender, app_data, user_data):
-        """Hides or shows multiple line series based on the checkbox state"""
-        is_checked = app_data
-        series_tags = user_data # This is now a list of strings
+            # Define 3D unit axes (scaled to physical length in meters)
+            axes = np.array([
+                [axis_length, 0, 0], # X (Red - Forward)
+                [0, axis_length, 0], # Y (Green - Left)
+                [0, 0, axis_length]  # Z (Blue - Up)
+            ])
+            rotated_axes = axes @ rot_matrix.T
+            
+            # Project the origin (0,0,0) to figure out the screen center point
+            ox, oy = self.project_3d_to_2d(0, 0, 0)
+            
+            lines_2d = []
+            for axis in rotated_axes:
+                # Project the rotated endpoint through the camera
+                px, py = self.project_3d_to_2d(axis[0], axis[1], axis[2])
+                
+                # Since the DPG node handles the drone's position on screen, 
+                # we just return the distance from the origin.
+                lines_2d.append([px - ox, py - oy])
+                
+            return lines_2d
+    def project_3d_to_2d(self, x, y, z):
+        """Corrected Dynamic 3D to 2D projection."""
+        # 1. Rotate around Z-axis (Yaw)
+        x1 = x * math.cos(self.cam_yaw) - y * math.sin(self.cam_yaw)
+        y1 = x * math.sin(self.cam_yaw) + y * math.cos(self.cam_yaw)
+
+        # 2. Rotate around camera's X-axis (Pitch)
+        # pitch=0 -> Side view (looking at Z). pitch=pi/2 -> Top-down (looking at Y)
+        screen_y_3d = y1 * math.sin(self.cam_pitch) + z * math.cos(self.cam_pitch)
+
+        # 3. Map to screen space 
+        # DPG Canvas Y goes DOWN. So to make +Z go UP, we subtract from center_y.
+        screen_x = self.cam_pan_x + x1 * self.cam_scale
+        screen_y = self.cam_pan_y - screen_y_3d * self.cam_scale
         
-        # Loop through every tag in the list and apply the show/hide state
+        return screen_x, screen_y
+        
+    def _on_mouse_drag(self, sender, app_data):
+        # app_data contains [button, x_delta, y_delta]
+        _, dx, dy = app_data
+        
+        # Only rotate if viewing the SWARM tab (optional check)
+        if dpg.get_value("combo_agent_select") == "SWARM":
+            # Left Click: Orbit (Yaw and Pitch)
+            if dpg.is_mouse_button_down(dpg.mvMouseButton_Left):
+                self.cam_yaw += dx * 0.001
+                self.cam_pitch += dy * 0.001
+                
+                # Clamp pitch to prevent flipping upside down
+                self.cam_pitch = max(0, min(self.cam_pitch, math.pi / 2.1))
+                
+            # Right Click: Pan (Move X/Y Center)
+            elif dpg.is_mouse_button_down(dpg.mvMouseButton_Right):
+                self.cam_pan_x += dx * 0.1
+                self.cam_pan_y += dy * 0.1
+
+    def _on_mouse_wheel(self, sender, app_data):
+        # app_data is the scroll wheel delta (usually 1 or -1)
+        if dpg.get_value("combo_agent_select") == "SWARM":
+            # Zoom in/out by adjusting the scale
+            self.cam_scale += app_data * 5
+            self.cam_scale = max(10, min(self.cam_scale, 300)) # Limit zoom
+
+    def _toggle_visibility(self, sender, app_data, user_data):
+        is_checked = app_data
+        series_tags = user_data 
         for tag in series_tags:
-            # Optional failsafe: check if the item exists before configuring it
             if dpg.does_item_exist(tag): 
                 dpg.configure_item(tag, show=is_checked)
                 
+    def _on_agent_selected(self, sender, app_data, user_data):
+        """Swaps the UI Layout between SWARM and SINGLE view."""
+        selected_view = app_data
+        if selected_view == "SWARM":
+            dpg.configure_item("group_single_view", show=False)
+            dpg.configure_item("group_swarm_view", show=True)
+            # Reset UI Flags to a neutral state
+            dpg.set_value("status_vbat", "VBAT: SWARM")
+            dpg.configure_item("status_vbat", color=(200, 200, 200))
+            dpg.set_value("status_armed", "ARMED: MULTIPLE")
+        else:
+            dpg.configure_item("group_swarm_view", show=False)
+            dpg.configure_item("group_single_view", show=True)
+
     # ==========================================
     # GUI Button Callbacks for Commands
     # ==========================================
+    def _get_target_agents(self):
+        """Helper to return a list of agents targeted by current UI selection."""
+        target = dpg.get_value("combo_agent_select")
+        if target == "SWARM":
+            return list(self.swarm_dict.values())
+        return [self.swarm_dict[target]]
+
     def cb_takeoff(self):
-        if self.cmd_queue:
+        for agent in self._get_target_agents():
             # 1. Grab the latest telemetry snapshot
-            snap = self.state.get_snapshot()
+            snap = agent.state.get_snapshot()
             
             # 2. SAFETY INTERLOCK: Check if already airborne
             if snap.get('flying', False):
@@ -110,22 +183,21 @@ class QuasarGUI:
                 if dpg.does_item_exist("status_armed"):
                     dpg.configure_item("status_armed", color=(255, 150, 0)) # Flash orange
                 return
-                
-            # 3. Safe to proceed
-            self.cmd_queue.takeoff(height=1.0, duration=2.0)
-    
+            
+            agent.command_queue.takeoff(height=1.0, duration=2.0)
+            
     def cb_land(self):
-        if self.cmd_queue:
-            self.cmd_queue.land(height=0.0, duration=2.0)
+        for agent in self._get_target_agents():
+            agent.command_queue.land(height=0.0, duration=2.0)
             
     def cb_stop_hover(self):
         # Kill trajectory and hover in place
-        if self.cmd_queue:
-            self.cmd_queue.stop_and_hover()
+        for agent in self._get_target_agents():
+            agent.command_queue.stop_and_hover()
             print("STOP HOVER: Trajectory aborted, hovering at current position.")
             
     def cb_emergency_stop(self):
-        # 1. Kill any active trajectory stream in GUI
+        # ALWAYS kill everything in the swarm, regardless of dropdown selection
         self.cancel_trajectory = True
         
         # 2. Send hardware halt command
@@ -295,9 +367,7 @@ class QuasarGUI:
         
         
     def cb_log(self):
-        print("Logging command received!")
-        self.logger.toggle_logging() # Start or stop logging
-        # Update the GUI visuals based on the new state
+        self.logger.toggle_logging() 
         if self.logger.is_logging:
             dpg.configure_item("btn_record", label="STOP RECORDING")
             dpg.bind_item_theme("btn_record", "theme_recording_active")
@@ -310,33 +380,24 @@ class QuasarGUI:
         
         with dpg.theme(tag="theme_recording_idle"):
             with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (100, 100, 100)) # Gray
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (100, 100, 100))
                 
         with dpg.theme(tag="theme_recording_active"):
             with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 40, 40)) # Bright Red
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 40, 40))
         
         with dpg.window(label="QUASAR Telemetry", width=1200, height=800):
             
-            # ==========================================
-            # 1. TOP DASHBOARD (Control Panel)
-            # ==========================================
-            with dpg.group(): 
-                dpg.add_text("Toggle Variable Groups:")
-                for chart_name, groups in self.plot_config.items():
-                    with dpg.group(horizontal=True):
-                        dpg.add_text(f"{chart_name}:", color=(200, 200, 200))
-                        for group_name, variables in groups.items():
-                            tags = [f"series_{var}" for var in variables]
-                            dpg.add_checkbox(
-                                label=group_name, default_value=True, 
-                                callback=self._toggle_visibility, user_data=tags 
-                            )
-            
-            dpg.add_spacer(height=10)
+            # --- THE MULTI-AGENT DROPDOWN ---
+            agent_options = ["SWARM"] + list(self.swarm_dict.keys())
+            with dpg.group(horizontal=True):
+                dpg.add_text("Active View:", color=(255, 200, 50))
+                dpg.add_combo(items=agent_options, default_value="SWARM", tag="combo_agent_select", callback=self._on_agent_selected, width=150)
+                
+            dpg.add_separator()
             
             # ==========================================
-            # 2. STATUS PANEL
+            # STATUS PANEL
             # ==========================================
             with dpg.group(horizontal=True):
                 dpg.add_text("STATUS |", color=(200, 200, 200))
@@ -346,24 +407,16 @@ class QuasarGUI:
                 dpg.add_text("FLYING: FALSE", tag="status_flying", color=(150, 150, 150))
                 dpg.add_text("CRASHED: FALSE", tag="status_crashed", color=(150, 150, 150))
                 dpg.add_text("LOCKED: FALSE", tag="status_locked", color=(150, 150, 150))
-                dpg.add_button(
-                            label="START RECORDING", 
-                                width=150, 
-                                height=40, 
-                                tag="btn_record", 
-                                callback=self.cb_log
-                            )
+                dpg.add_button(label="START RECORDING", width=150, height=40, tag="btn_record", callback=self.cb_log)
                 dpg.bind_item_theme("btn_record", "theme_recording_idle")
                 
             dpg.add_spacer(height=10) 
             dpg.add_separator()
             
-            
             # ==========================================
-            #  COMMAND & CONTROL PANEL
+            # COMMAND & CONTROL PANEL
             # ==========================================
             with dpg.group(horizontal=True):
-                # Immediate Actions, land, takeoff, shutdown
                 with dpg.group():
                     dpg.add_text("Flight Controls", color=(200, 200, 200))
                     with dpg.group(horizontal=True):
@@ -432,8 +485,90 @@ class QuasarGUI:
             dpg.add_spacer(height=10)
             
             # ==========================================
-            # BOTTOM SECTION: PLOTS & TRACKBALL
+            # LAYOUT 1: SWARM OVERVIEW (Default)
             # ==========================================
+            with dpg.group(tag="group_swarm_view", show=True):
+                    dpg.add_text("3D Swarm Spatial Overview", color=(150, 150, 255))
+                    
+                    # Create a blank drawing canvas
+                    with dpg.drawlist(width=800, height=500, tag="swarm_3d_canvas"):
+                        # Draw a dark background
+                        dpg.draw_rectangle([0,0], [800,500], color=[50,50,50], fill=[30,30,30])
+                        
+                            # --- NEW: Generate tags for the grid lines ---
+                        self.grid_size = 3 # -3m to +3m
+                        self.grid_lines = []
+                        
+                        # X-axis parallel lines
+                        for y in range(-self.grid_size, self.grid_size + 1):
+                            tag = f"grid_x_{y}"
+                            dpg.draw_line([0,0], [0,0], color=[80, 80, 80, 150], thickness=1, tag=tag)
+                            self.grid_lines.append(('x', y, tag))
+                            
+                        # Y-axis parallel lines
+                        for x in range(-self.grid_size, self.grid_size + 1):
+                            tag = f"grid_y_{x}"
+                            dpg.draw_line([0,0], [0,0], color=[80, 80, 80, 150], thickness=1, tag=tag)
+                            self.grid_lines.append(('y', x, tag))
+                        
+                        # Create a trackball node for each drone
+                        for a_id in self.swarm_dict.keys():
+                            with dpg.draw_node(tag=f"swarm_node_{a_id}"):
+                                # Draw the X, Y, Z orientation lines
+                                dpg.draw_line([0,0], [0,0], color=[255, 50, 50], thickness=2, tag=f"s_tb_x_{a_id}")
+                                dpg.draw_line([0,0], [0,0], color=[50, 255, 50], thickness=2, tag=f"s_tb_y_{a_id}")
+                                dpg.draw_line([0,0], [0,0], color=[50, 150, 255], thickness=2, tag=f"s_tb_z_{a_id}")
+                                
+                                # Add a label hovering slightly above the drone
+                                dpg.draw_text([10, -20], text=a_id, color=[200, 200, 200], size=15)
+
+
+            # ==========================================
+            # LAYOUT 2: SINGLE AGENT DETAILS (Hidden by default)
+            # ==========================================
+            with dpg.group(tag="group_single_view", show=False):
+                with dpg.group(): 
+                    dpg.add_text("Toggle Variable Groups:")
+                    for chart_name, groups in self.plot_config.items():
+                        with dpg.group(horizontal=True):
+                            dpg.add_text(f"{chart_name}:", color=(200, 200, 200))
+                            for group_name, variables in groups.items():
+                                tags = [f"series_{var}" for var in variables]
+                                dpg.add_checkbox(label=group_name, default_value=True, callback=self._toggle_visibility, user_data=tags)
+
+                with dpg.group(horizontal=True):
+                    with dpg.group(width=-180):
+                        num_charts = len(self.plot_config)
+                        with dpg.subplots(num_charts, 1, label="Telemetry", width=-1, height=-1, link_all_x=True):
+                            for chart_name, groups in self.plot_config.items():
+                                with dpg.plot(label=chart_name):
+                                    dpg.add_plot_legend()
+                                    x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)")
+                                    if not hasattr(self, 'master_x_axis'):
+                                        self.master_x_axis = x_axis 
+                                        
+                                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label=chart_name)
+                                    dpg.set_axis_limits_auto(y_axis)
+                                    for group_name, variables in groups.items():
+                                        for var in variables:
+                                            dpg.add_line_series([], [], label=f"{group_name} {var.upper()}", tag=f"series_{var}", parent=y_axis)
+
+                    with dpg.group():
+                        dpg.add_text("Orientation", color=(200, 200, 200))
+                        with dpg.drawlist(width=150, height=150):
+                            dpg.draw_rectangle([0,0], [150,150], color=[50,50,50], fill=[30,30,30])
+                            with dpg.draw_node(tag="trackball_node"):
+                                dpg.draw_line([0,0], [0,0], color=[255, 50, 50], thickness=3, tag="tb_x")
+                                dpg.draw_line([0,0], [0,0], color=[50, 255, 50], thickness=3, tag="tb_y")
+                                dpg.draw_line([0,0], [0,0], color=[50, 150, 255], thickness=3, tag="tb_z")
+                        dpg.apply_transform("trackball_node", dpg.create_translation_matrix([75, 75]))
+
+        dpg.create_viewport(title='QUASAR Swarm Testbed', width=1250, height=850)
+        
+        with dpg.handler_registry():
+            dpg.add_mouse_drag_handler(callback=self._on_mouse_drag)
+            dpg.add_mouse_wheel_handler(callback=self._on_mouse_wheel)
+            
             with dpg.group(horizontal=True):
                 
                 # --- LEFT SIDE: SUBPLOTS ---
@@ -488,138 +623,104 @@ class QuasarGUI:
         start_time = time.time()
         view_window_seconds = 5.0 
         
-        last_t = 0.0 
-        
         while dpg.is_dearpygui_running():
-            snap = self.state.get_snapshot()
-            #print(11343434343)
+            current_view = dpg.get_value("combo_agent_select")
             
-            # Only append if the data's timestamp is newer than the last one
-            if snap['t'] > last_t:
-                #print(14134)
-                last_t = snap['t']
-                current_time = time.time() - start_time
-                self.time_data.append(current_time)
+            # 1. Constantly update background buffers for ALL agents
+            for a_id, agent in self.swarm_dict.items():
+                snap = agent.state.get_snapshot()
                 
-                x_list = list(self.time_data)
+                if snap['t'] > self.last_t[a_id]:
+                    self.last_t[a_id] = snap['t']
+                    current_time = time.time() - start_time
+                    self.time_data[a_id].append(current_time)
+                    
+                    for var in self.tracked_vars:
+                        self.history[a_id][var].append(snap[var])
+
+                   
+                    # 2A. Update Isometric 3D Canvas if we are in Swarm View
+                    if current_view == "SWARM":
+                        
+                        for axis, val, tag in self.grid_lines:
+                            if axis == 'x':
+                                p1 = self.project_3d_to_2d(-self.grid_size, val, 0)
+                                p2 = self.project_3d_to_2d(self.grid_size, val, 0)
+                            else:
+                                p1 = self.project_3d_to_2d(val, -self.grid_size, 0)
+                                p2 = self.project_3d_to_2d(val, self.grid_size, 0)
+                            dpg.configure_item(tag, p1=p1, p2=p2)
+                        # 1. Project the drone's 3D position to the 2D canvas
+                        sx, sy = self.project_3d_to_2d(
+                            snap['ex'], snap['ey'], snap['ez'], 
+                            
+                        )
+                        
+                        # 2. Translate the entire node to that pixel coordinate
+                        dpg.apply_transform(
+                            f"swarm_node_{a_id}", 
+                            dpg.create_translation_matrix([sx, sy])
+                        )
+                        
+                        # 3. Calculate and apply the rotated trackball lines
+                        # (Scaled down to 30 so they aren't massive on the swarm map)
+                        endpoints = self.get_trackball_lines(
+                            [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']], 
+                            axis_length=0.4 # Lines are drawn 0.4 meters long
+                        
+                        )
+                        
+                        dpg.configure_item(f"s_tb_x_{a_id}", p2=endpoints[0])
+                        dpg.configure_item(f"s_tb_y_{a_id}", p2=endpoints[1])
+                        dpg.configure_item(f"s_tb_z_{a_id}", p2=endpoints[2])
+
+            # 2B. Update detailed plots if viewing a specific agent
+            if current_view != "SWARM":
+                snap = self.swarm_dict[current_view].state.get_snapshot()
+                x_list = list(self.time_data[current_view])
                 
-                # Update ALL lines in a single, flat loop!
+                # Update line series
                 for var in self.tracked_vars:
-                    self.history[var].append(snap[var])
-                    dpg.set_value(f"series_{var}", [x_list, list(self.history[var])])
+                    dpg.set_value(f"series_{var}", [x_list, list(self.history[current_view][var])])
                 
-                #Update Trackball Orientation
-                endpoints = self.get_trackball_lines(
-                    [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']]
-                )
-                # Update the p2 (endpoint) of each line. p1 stays at [0,0] (the center)
+                # Update Trackball 
+                endpoints = self.get_trackball_lines([snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']])
                 dpg.configure_item("tb_x", p2=endpoints[0])
                 dpg.configure_item("tb_y", p2=endpoints[1])
                 dpg.configure_item("tb_z", p2=endpoints[2])
                 
-                #  UPDATE BATTERY DISPLAY
+                # Update Status Values
                 vbat = snap['vbat']
                 dpg.set_value("status_vbat", f"VBAT: {vbat:.2f} V")
-                
-                # Color code the battery (Assuming 1S LiPo: 4.2V max, 3.3V dead)
-                if vbat < 3.3:
-                    dpg.configure_item("status_vbat", color=(255, 50, 50)) # Red
-                elif vbat < 3.6:
-                    dpg.configure_item("status_vbat", color=(255, 200, 50)) # Yellow
-                else:
-                    dpg.configure_item("status_vbat", color=(50, 255, 50)) # Green
+                if vbat < 3.3: dpg.configure_item("status_vbat", color=(255, 50, 50)) 
+                elif vbat < 3.6: dpg.configure_item("status_vbat", color=(255, 200, 50)) 
+                else: dpg.configure_item("status_vbat", color=(50, 255, 50)) 
 
-                #  UPDATE STATE FLAGS
-                # ARMED FLAG
-                if snap['armed']:
-                    dpg.set_value("status_armed", "ARMED: TRUE")
-                    dpg.configure_item("status_armed", color=(255, 50, 50)) # Danger Red
-                else:
-                    dpg.set_value("status_armed", "ARMED: FALSE")
-                    dpg.configure_item("status_armed", color=(150, 150, 150)) # Safe Gray
-
-                # FLYING FLAG
-                if snap['flying']:
-                    dpg.set_value("status_flying", "FLYING: TRUE")
-                    dpg.configure_item("status_flying", color=(50, 255, 50)) # Green
-                else:
-                    dpg.set_value("status_flying", "FLYING: FALSE")
-                    dpg.configure_item("status_flying", color=(150, 150, 150))
-
-                # CRASHED FLAG
-                if snap['crashed']:
-                    dpg.set_value("status_crashed", "CRASHED: TRUE!")
-                    dpg.configure_item("status_crashed", color=(255, 0, 0)) # Bright Red
-                else:
-                    dpg.set_value("status_crashed", "CRASHED: FALSE")
-                    dpg.configure_item("status_crashed", color=(150, 150, 150))
-                    
-                if snap['locked']:
-                    dpg.set_value("status_locked", "LOCKED: TRUE")
-                    dpg.configure_item("status_locked", color=(255, 0, 0)) # Bright Red
-                else:
-                    dpg.set_value("status_locked", "LOCKED: FALSE")
-                    dpg.configure_item("status_locked", color=(150, 150, 150))
-            #print(13431413513535)
-            # --- SCROLLING LOGIC (Runs every frame for smooth visuals) ---
-            if self.time_data:
-                latest_t = self.time_data[-1]
-                min_t = latest_t - view_window_seconds
+                # Flag Updates
+                dpg.set_value("status_armed", f"ARMED: {snap['armed']}")
+                dpg.configure_item("status_armed", color=(255, 50, 50) if snap['armed'] else (150, 150, 150))
                 
-                if min_t < 0:
-                    min_t = 0.0
-                    
-                dpg.set_axis_limits(self.master_x_axis, min_t, latest_t)
+                dpg.set_value("status_flying", f"FLYING: {snap['flying']}")
+                dpg.configure_item("status_flying", color=(50, 255, 50) if snap['flying'] else (150, 150, 150))
+
+                dpg.set_value("status_crashed", f"CRASHED: {snap['crashed']}")
+                dpg.configure_item("status_crashed", color=(255, 0, 0) if snap['crashed'] else (150, 150, 150))
                 
+                dpg.set_value("status_locked", f"LOCKED: {snap['locked']}")
+                dpg.configure_item("status_locked", color=(255, 0, 0) if snap['locked'] else (150, 150, 150))
+
+                # X-Axis Scrolling
+                if x_list:
+                    min_t = max(0.0, x_list[-1] - view_window_seconds)
+                    dpg.set_axis_limits(self.master_x_axis, min_t, x_list[-1])
             
             dpg.render_dearpygui_frame()
-            #print(13413413)
             
         dpg.destroy_context()
-        
 
 
-def test_gui():
-    # 1. Initialize Shared State
-    shared_state = SystemState()
-    pose_queue = queue.Queue(maxsize=1)
-    
-    def mock_data():
-        while True:
-            with shared_state.lock:
-                t = time.time()
-                # Generates smooth waves for X, Y, and Z
-                shared_state.estimate_pose.x, shared_state.estimate_pose.y, shared_state.estimate_pose.z = math.sin(t), math.cos(t), math.sin(t * 0.5)
-                shared_state.time = t
-            time.sleep(0.01) # ~50Hz
-    # The 1-liner to spawn it
-    threading.Thread(target=mock_data, daemon=True).start()
-    mock_motive = start_mock_stream(pose_queue, shared_state)
-    
-    # 3. Start GUI on the Main Thread
-    gui = QuasarGUI(shared_state)
+def start_gui(swarm_dict):
+    """Entry point from main.py"""
+    gui = QuasarGUI(swarm_dict)
     gui.setup_gui()
-    gui.run() # This blocks and runs the while loop until you close the window
-
-def start_gui(shared_state, command_queue=None, crazyflie=None):
-    # Start the GUI on the main thread
-    gui = QuasarGUI(shared_state, command_queue=command_queue)
-    
-    if command_queue:
-        gui.swarm_queues = {"Single UAV": command_queue} # allows test trajectories with a single agent
-    
-    gui.setup_gui()
-    gui.run() # This blocks and runs the while loop until you close the window
-    
-    if __name__ == '__main__':
-    # 1. Initialize Shared State
-            shared_state = SystemState()
-    
-    # 2. Start Background Logging (Assuming 'cf' is your connected Crazyflie)
-    # logger = TelemetryLogger(cf, shared_state)
-    # logger.start_logging()
-    
-    # 3. Start GUI on the Main Thread
-    gui = QuasarGUI(shared_state)
-    gui.setup_gui()
-    gui.run() # This blocks and runs the while loop until you close the window
+    gui.run()

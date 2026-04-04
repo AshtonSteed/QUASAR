@@ -5,8 +5,8 @@ from datetime import datetime
 
 #Class to handle logging as called from GUI
 class FlightLogger:
-    def __init__(self, shared_state):
-        self.state = shared_state
+    def __init__(self, swarm_dict):
+        self.swarm_dict = swarm_dict
         self.is_logging = False
         self._log_thread = None
 
@@ -35,7 +35,8 @@ class FlightLogger:
         print(f"Started recording telemetry to {filename}")
         
         # Grab one snapshot just to extract the dictionary keys for the CSV headers
-        initial_snap = self.state.get_snapshot()
+        initial_snap = self.swarm_dict[list(self.swarm_dict.keys())[0]].state.get_snapshot()
+        initial_snap['agent_id'] = list(self.swarm_dict.keys())[0]
         fieldnames = list(initial_snap.keys())
 
         # Open the file and keep it open for the duration of the flight
@@ -47,8 +48,10 @@ class FlightLogger:
                 loop_start = time.time()
                 
                 # Grab fresh data from your lock-protected state
-                snap = self.state.get_snapshot()
-                writer.writerow(snap)
+                for agent in self.swarm_dict.values():
+                    snap = agent.state.get_snapshot()
+                    snap['agent_id'] = agent.agent_id # Inject ID
+                    writer.writerow(snap)
                 
                 # Force the OS to write to disk occasionally so data isn't lost in a crash
                 csv_file.flush() 
