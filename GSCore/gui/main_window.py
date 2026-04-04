@@ -10,7 +10,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
-from GSCore.tools.trajectory_math import TrajectoryGenerator
+from GSCore.core.trajectory_math import TrajectoryGenerator
 from GSCore.drivers.mock_motive_client import start_mock_stream
 from GSCore.data.logger import FlightLogger
 from common_classes import SystemState

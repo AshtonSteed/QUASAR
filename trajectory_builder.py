@@ -4,7 +4,7 @@ import json
 import math
 import dearpygui.dearpygui as dpg
 
-from GSCore.tools.trajectory_math import TrajectoryGenerator
+from GSCore.core.trajectory_math import TrajectoryGenerator
 
 class TrajectoryBuilderGUI:
     def __init__(self):
