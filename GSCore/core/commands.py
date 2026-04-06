@@ -140,9 +140,15 @@ class CommandQueue: # Removed empty parenthesis
                 wp = self.current_trajectory[self.traj_step_index]
                 
                 # Command the linear segment
-                cf_manager.cf.high_level_commander.go_to(
+                '''cf_manager.cf.high_level_commander.go_to(
                     wp[0], wp[1], wp[2], wp[3], 
                     self.traj_step_duration, relative=False, linear=True
+                )'''
+                
+                # Low Level setpoint command
+                # Should be more efficient, not generating a new trajectory onboard repeatedly
+                cf_manager.cf.commander.send_position_setpoint( 
+                    wp[0], wp[1], wp[2], wp[3]
                 )
                 
                 self.traj_step_index += 1
