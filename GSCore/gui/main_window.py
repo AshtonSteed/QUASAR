@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from GSCore.core.commands import DroneCmd, DroneCommand
-from GSCore.core.trajectory_math import TrajectoryGenerator
+from GSCore.tools.trajectory_math import TrajectoryGenerator
 from GSCore.data.logger import FlightLogger
 from common_classes import SystemState
 
