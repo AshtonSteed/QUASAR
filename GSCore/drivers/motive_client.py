@@ -79,7 +79,7 @@ def start_motive_stream(swarm_dict):
     motive_client.on_data_frame_received_event.handlers.append(receive_motive_data)
     motive_client.run_async()
     
-    print("Connectd to Motive.")
+    print("Connected to Motive.")
     return motive_client
     
 
