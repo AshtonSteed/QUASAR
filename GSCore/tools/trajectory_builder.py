@@ -370,7 +370,7 @@ class TrajectoryBuilderGUI:
     def scan_trajectories(self):
         """Scans the trajectories folder and populates the load dropdown."""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        save_dir = os.path.abspath(os.path.join(current_dir, 'trajectories'))
+        save_dir = os.path.abspath(os.path.join(current_dir, '..', '..', 'trajectories'))
         os.makedirs(save_dir, exist_ok=True)
         
         # Find all json files
@@ -387,7 +387,7 @@ class TrajectoryBuilderGUI:
         if not filename: return
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        filepath = os.path.join(current_dir, 'trajectories', filename)
+        filepath = os.path.join(current_dir, '..', '..', 'trajectories', filename)
         
         try:
             with open(filepath, 'r') as f:
@@ -432,7 +432,7 @@ class TrajectoryBuilderGUI:
         duration = dpg.get_value("input_duration")
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        save_dir = os.path.abspath(os.path.join(current_dir, 'trajectories'))
+        save_dir = os.path.abspath(os.path.join(current_dir,'..', '..',  'trajectories'))
         os.makedirs(save_dir, exist_ok=True)
         filepath = os.path.join(save_dir, filename)
 
