@@ -396,6 +396,14 @@ class TrajectoryBuilderGUI:
             # 1. Restore the segment definitions (the math instructions)
             self.segments = data.get("segment_definitions", [])
             
+            start_state = data.get("start_state")
+            if start_state:
+                dpg.set_value("start_x", start_state.get("x", 0.0))
+                dpg.set_value("start_y", start_state.get("y", 0.0))
+                dpg.set_value("start_z", start_state.get("z", 0.0))
+                if dpg.does_item_exist("start_yaw"):
+                    dpg.set_value("start_yaw", start_state.get("yaw", 0.0))
+            
             # 2. Fast-forward the segment ID counter so new additions don't collide
             if self.segments:
                 self.segment_counter = max(seg["id"] for seg in self.segments)
@@ -440,9 +448,15 @@ class TrajectoryBuilderGUI:
             "name": name,
             "total_duration": duration,
             "num_points": len(self.generated_waypoints),
+            "start_state": {
+                "x": dpg.get_value("start_x"),
+                "y": dpg.get_value("start_y"),
+                "z": dpg.get_value("start_z"),
+                "yaw": dpg.get_value("start_yaw") if dpg.does_item_exist("start_yaw") else 0.0
+            },
             "segment_definitions": self.segments,
             "waypoints": self.generated_waypoints
-        }
+}
 
         with open(filepath, 'w') as f:
             json.dump(traj_data, f, indent=4)
@@ -473,11 +487,11 @@ class TrajectoryBuilderGUI:
                     
                     dpg.add_text("1. Absolute Start Point", color=(200,200,200))
                     with dpg.group(horizontal=True):
-                        dpg.add_input_float(label="X", default_value=0.0, tag="start_x", width=80)
-                        dpg.add_input_float(label="Y", default_value=0.0, tag="start_y", width=80)
-                        dpg.add_input_float(label="Z", default_value=0.0, tag="start_z", width=80)
-                    dpg.add_separator()
-                    
+                        dpg.add_input_float(label="X", default_value=0.0, tag="start_x", width=60)
+                        dpg.add_input_float(label="Y", default_value=0.0, tag="start_y", width=60)
+                        dpg.add_input_float(label="Z", default_value=0.0, tag="start_z", width=60)
+                        dpg.add_input_float(label="Yaw", default_value=0.0, tag="start_yaw", width=60)
+                                        
                     dpg.add_text("2. Build Path", color=(200,200,200))
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="+ Add Linear", callback=self.add_linear_segment)

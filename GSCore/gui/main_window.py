@@ -254,10 +254,8 @@ class QuasarGUI:
         center = dpg.get_value("input_swarm_center")
         cx, cy = center[0], center[1]
 
-        # 3. Calculate new positions for the active drones
-        # Note: You will need to pull your list of active drones here. 
-        # For this example, let's assume you have 3 active drones.
-        active_drones = list(self.swarm_queues.keys()) # This should be a list of drone IDs that are currently active in the swarm
+        # 3. Calculate new positions for the active drones using swarm_dict
+        active_drones = list(self.swarm_dict.keys())
         num_drones = len(active_drones)
         
         if num_drones == 0: return
@@ -265,6 +263,8 @@ class QuasarGUI:
         phase_separation = 360.0 / num_drones
 
         for index, drone_id in enumerate(active_drones):
+            agent = self.swarm_dict[drone_id]
+
             # Calculate this drone's angle on the circle
             drone_angle_deg = (index * phase_separation) + self.swarm_yaw
             theta = math.radians(drone_angle_deg)
@@ -279,8 +279,8 @@ class QuasarGUI:
             
             # 4. Dispatch the GOTO command!
             # Instead of a trajectory, we just send a 1.5s straight-line move
-            if drone_id in self.swarm_queues:
-                self.swarm_queues[drone_id].goto(
+            if hasattr(agent, 'command_queue'):
+                agent.command_queue.goto(
                     x=target_x, 
                     y=target_y, 
                     z=target_z, 
@@ -618,7 +618,7 @@ class QuasarGUI:
                             dpg.configure_item(tag, p1=p1, p2=p2)
                         # 1. Project the drone's 3D position to the 2D canvas
                         sx, sy = self.project_3d_to_2d(
-                            snap['ex'], snap['ey'], snap['ez'], 
+                            snap['mx'], snap['my'], snap['mz'], 
                             
                         )
                         
@@ -631,7 +631,7 @@ class QuasarGUI:
                         # 3. Calculate and apply the rotated trackball lines
                         # (Scaled down to 30 so they aren't massive on the swarm map)
                         endpoints = self.get_trackball_lines(
-                            [snap['eqx'], snap['eqy'], snap['eqz'], snap['eqw']], 
+                            [snap['mqx'], snap['mqy'], snap['mqz'], snap['mqw']], 
                             axis_length=0.4 # Lines are drawn 0.4 meters long
                         
                         )

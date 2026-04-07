@@ -18,7 +18,7 @@ def start_testbed():
     swarm_config = [
         {"id": "CF_1", "uri": "radio://0/110/1M/E7E7E7E701", "motive_id": 1},
         {"id": "CF_2", "uri": "radio://0/110/1M/E7E7E7E702", "motive_id": 2},
-        {"id": "CF_3", "uri": "radio://0/110/1M/E7E7E7E703", "motive_id": 3},
+        #{"id": "CF_3", "uri": "radio://0/110/1M/E7E7E7E703", "motive_id": 3},
     ]
     
     # 2. Instantiate Agents
@@ -28,7 +28,7 @@ def start_testbed():
         swarm_dict[conf["id"]] = agent
         
     # 3. Start Motive Router
-    motive_client = start_mock_stream(swarm_dict)
+    motive_client = start_motive_stream(swarm_dict)
     
     # 4. Connect Hardware
     cflib.crtp.init_drivers()
