@@ -266,7 +266,7 @@ class QuasarGUI:
             agent = self.swarm_dict[drone_id]
 
             # Calculate this drone's angle on the circle
-            drone_angle_deg = (index * phase_separation) + self.swarm_yaw
+            '''drone_angle_deg = (index * phase_separation) + self.swarm_yaw
             theta = math.radians(drone_angle_deg)
             
             # Geometry: X = Center + (Radius * Cos), Y = Center + (Radius * Sin)
@@ -275,19 +275,30 @@ class QuasarGUI:
             target_z = self.swarm_z
             
             # Point the nose of the drone tangent to the circle (optional)
-            target_yaw = drone_angle_deg + 90.0
+            target_yaw = drone_angle_deg + 90.0'''
             
             # 4. Dispatch the GOTO command!
             # Instead of a trajectory, we just send a 1.5s straight-line move
             if hasattr(agent, 'command_queue'):
                 agent.command_queue.goto(
-                    x=target_x, 
-                    y=target_y, 
-                    z=target_z, 
-                    yaw=target_yaw, 
-                    duration=1.5
+                    x=0, 
+                    y=0, 
+                    z=amount, 
+                    yaw=0, 
+                    duration=1.5,
+                    relative=True
                 )
 
+    def cb_step_test(self, length=0.3):
+        """ Shift selected UAV +0.3m in X, then back after some time, to test the one-off command functionality."""
+        for agent in self._get_target_agents():
+            ex, ey, ez = agent.state.get_position()
+            agent.command_queue.step_test((ex + length, ey, ez)) # Move +0.3m in X
+        time.sleep(3) # Wait for 3 seconds
+        for agent in self._get_target_agents():
+            ex, ey, ez = agent.state.get_position()
+            agent.command_queue.step_test((ex - length, ey, ez)) # Move back to original position
+        
     def cb_manual_goto(self):
         """One-off point jump using the goto() method in commands.py."""
         x, y, z = dpg.get_value("input_man_pos")
@@ -415,6 +426,8 @@ class QuasarGUI:
                 dpg.add_text("LOCKED: FALSE", tag="status_locked", color=(150, 150, 150))
                 dpg.add_button(label="START RECORDING", width=150, height=40, tag="btn_record", callback=self.cb_log)
                 dpg.bind_item_theme("btn_record", "theme_recording_idle")
+                dpg.add_spacer(width=20)
+                dpg.add_button(label="STEP TEST", width=120, height=40, callback=self.cb_step_test)
                 
             dpg.add_spacer(height=10) 
             dpg.add_separator()

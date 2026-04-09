@@ -9,6 +9,7 @@ class DroneCmd(Enum):
     TAKEOFF = auto()
     LAND = auto()
     GOTO = auto()
+    STEPTEST = auto()
     START_LL_STREAM = auto()
     HOVER = auto()
     TRAJECTORY = auto()
@@ -20,6 +21,7 @@ class DroneCommand:
     y: float = 0.0
     z: float = 0.0
     yaw: float = 0.0
+    relative: bool = False
     height: float = 0.0
     duration: float = 0.0
     linear: bool = False # For future use in trajectory following
@@ -101,7 +103,7 @@ class CommandQueue: # Removed empty parenthesis
                     
                 elif cmd.action == DroneCmd.GOTO:
                     cf_manager.cf.high_level_commander.go_to(
-                        cmd.x, cmd.y, cmd.z, cmd.yaw, cmd.duration, relative=False
+                        cmd.x, cmd.y, cmd.z, cmd.yaw, cmd.duration, relative=cmd.relative, linear=cmd.linear
                     )
                     self.mode = "HL_BUSY"
                     self._hl_end_time = time.time() + cmd.duration
@@ -119,6 +121,12 @@ class CommandQueue: # Removed empty parenthesis
                     self.mode = "TRAJECTORY"
                     self._hl_end_time = time.time() + cmd.duration
                     self.traj_next_step_time = time.time() # Start first point now  
+                    
+                elif cmd.action == DroneCmd.STEPTEST:
+                    cf_manager.cf.commander.send_position_setpoint( 
+                        cmd.x, cmd.y, cmd.z, cmd.yaw
+                    )
+                    # No state change, just a one-off command
             
             except queue.Empty:
                 pass # Queue is empty, just keep flying
@@ -140,16 +148,16 @@ class CommandQueue: # Removed empty parenthesis
                 wp = self.current_trajectory[self.traj_step_index]
                 
                 # Command the linear segment
-                '''cf_manager.cf.high_level_commander.go_to(
+                cf_manager.cf.high_level_commander.go_to(
                     wp[0], wp[1], wp[2], wp[3], 
                     self.traj_step_duration, relative=False, linear=True
-                )'''
+                )
                 
                 # Low Level setpoint command
                 # Should be more efficient, not generating a new trajectory onboard repeatedly
-                cf_manager.cf.commander.send_position_setpoint( 
+                '''cf_manager.cf.commander.send_position_setpoint( 
                     wp[0], wp[1], wp[2], wp[3]
-                )
+                )'''
                 
                 self.traj_step_index += 1
                 self.traj_next_step_time = now + self.traj_step_duration
@@ -200,8 +208,8 @@ class CommandQueue: # Removed empty parenthesis
     def land(self, height=0.0, duration=2.0):
         self.command_queue.put(DroneCommand(action=DroneCmd.LAND, height=height, duration=duration))
         
-    def goto(self, x, y, z, yaw=0.0, duration=2.0, linear=False):
-        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration, linear=linear))
+    def goto(self, x, y, z, yaw=0.0, duration=2.0, linear=False, relative=False):
+        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration, linear=linear, relative=relative))
         
     def kill_motors(self):
         self.kill = True
@@ -229,6 +237,12 @@ class CommandQueue: # Removed empty parenthesis
         ))   
         #NOTE: not the spot for this maybe?
         print(f"Transitioning to start and beginning playbook execution. Total waypoints: {len(waypoints)}, Total duration: {total_duration}s")
+        
+    
+    def step_test(self, target_position):
+        self.command_queue.put(DroneCommand(action=DroneCmd.STEPTEST, x=target_position[0], y=target_position[1], z=target_position[2], yaw=0.0, duration=2.0))
+        
+        
         
         
         
