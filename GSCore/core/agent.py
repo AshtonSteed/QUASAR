@@ -24,8 +24,15 @@ class Agent:
     def connect_and_start(self):
         """Helper to spin up this specific agent's driver."""
         if self.driver.connect():
+            
+            
             print(f"Agent {self.agent_id} connected successfully.")
             self.driver.start()
+            
+            # TODO: TEMPORARY HACK - test CF1 using mellinger vs cf2 using PID
+            if self.agent_id == "CF_1":
+                self.driver.cf.param.set_value('stabilizer.controller', '2') # Use Mellinger Controller
+                self.driver.cf.param.set_value('ctrlMel.mass', '36.0e-3') # Set the mass of the drone, ~36g?
             return True
         
         print(f"Agent {self.agent_id} failed to connect.")

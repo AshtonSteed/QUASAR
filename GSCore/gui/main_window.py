@@ -289,7 +289,7 @@ class QuasarGUI:
                     relative=True
                 )
 
-    def cb_step_test(self, length=0.3):
+    def cb_step_test(self, length=0.4):
         """ Shift selected UAV +0.3m in X, then back after some time, to test the one-off command functionality."""
         for agent in self._get_target_agents():
             ex, ey, ez = agent.state.get_position()
