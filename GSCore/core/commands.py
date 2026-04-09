@@ -123,9 +123,14 @@ class CommandQueue: # Removed empty parenthesis
                     self.traj_next_step_time = time.time() # Start first point now  
                     
                 elif cmd.action == DroneCmd.STEPTEST:
-                    cf_manager.cf.commander.send_position_setpoint( 
-                        cmd.x, cmd.y, cmd.z, cmd.yaw
-                    )
+                    #cf_manager.cf.high_level_commander.go_to(
+                    #    cmd.x, cmd.y, cmd.z, cmd.yaw, 0.1, relative=False, linear=False)
+                    for i in range(50):
+                        cf_manager.cf.commander.send_position_setpoint( 
+                            cmd.x, cmd.y, cmd.z, cmd.yaw
+                        )
+                        time.sleep(0.02) # 50Hz setpoint stream for 1 second
+                    
                     # No state change, just a one-off command
             
             except queue.Empty:
@@ -148,16 +153,16 @@ class CommandQueue: # Removed empty parenthesis
                 wp = self.current_trajectory[self.traj_step_index]
                 
                 # Command the linear segment
-                cf_manager.cf.high_level_commander.go_to(
+                '''cf_manager.cf.high_level_commander.go_to(
                     wp[0], wp[1], wp[2], wp[3], 
                     self.traj_step_duration, relative=False, linear=True
-                )
+                )'''
                 
                 # Low Level setpoint command
                 # Should be more efficient, not generating a new trajectory onboard repeatedly
-                '''cf_manager.cf.commander.send_position_setpoint( 
+                cf_manager.cf.commander.send_position_setpoint( 
                     wp[0], wp[1], wp[2], wp[3]
-                )'''
+                )
                 
                 self.traj_step_index += 1
                 self.traj_next_step_time = now + self.traj_step_duration

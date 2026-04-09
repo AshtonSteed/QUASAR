@@ -184,17 +184,70 @@ class QuasarGUI:
                     dpg.configure_item("status_armed", color=(255, 150, 0)) # Flash orange
                 return
             
-            agent.command_queue.takeoff(height=1.0, duration=2.0)
+            agent.command_queue.takeoff(height=1.0, duration=1.0)
             
     def cb_land(self):
         for agent in self._get_target_agents():
-            agent.command_queue.land(height=0.0, duration=2.0)
+            agent.command_queue.land(height=0.0, duration=1.0)
             
     def cb_stop_hover(self):
         # Kill trajectory and hover in place
         for agent in self._get_target_agents():
             agent.command_queue.stop_and_hover()
             print("STOP HOVER: Trajectory aborted, hovering at current position.")
+            
+    def cb_box_bouncer(self):
+        """Spins up a background thread for the reactive box-limit logic."""
+        target_agents = self._get_target_agents()
+        if not target_agents: return
+        
+        print("Starting Reactive Box Bouncer...")
+        # Use an Event flag so we can kill the thread with the Emergency Stop button
+        self.bouncing_active = True 
+        threading.Thread(target=self._box_bounce_loop, args=(target_agents,), daemon=True).start()
+
+    def _box_bounce_loop(self, agents):
+        """The background thread that replicates move_box_limit."""
+        box_limit = 0.4 # 0.5 meters
+        max_vel = 0.5   # m/s
+        
+        while self.bouncing_active and not self.cancel_trajectory:
+            for agent in agents:
+                # 1. Read the thread-safe position estimate from QUASAR's state manager
+                pos_x, pos_y, pos_z = agent.state.get_position()
+                
+                # Default velocities
+                vx = 0.25
+                vy = 0.25
+                vz = 0.25
+                
+                # 2. Apply Box limits (Reactive Logic)
+                if pos_x > box_limit:
+                    vx = -max_vel
+                elif pos_x < -box_limit:
+                    vx = max_vel
+                    
+                if pos_y > box_limit:
+                    vy = -max_vel
+                elif pos_y < -box_limit:
+                    vy = max_vel
+                    
+                if pos_z > 1.3:
+                    vz = -max_vel
+                elif pos_z < 0.3: # Don't let it crash into the floor
+                    vz = max_vel
+
+                # 3. Convert the vertical speed request into a hover altitude command.
+                target_altitude = pos_z + vz * 0.02
+                target_altitude = max(0.3, min(target_altitude, 1.3))
+
+                # send_hover_setpoint(vx, vy, yaw_rate, z_distance)
+                agent.driver.cf.commander.send_hover_setpoint(vx, vy, 0.0, target_altitude)
+            
+            # Sleep 100ms to mimic the time.sleep(0.1) from the original script
+            time.sleep(0.02)
+            
+        print("Box Bouncer Terminated.")
             
     def cb_emergency_stop(self):
         # ALWAYS kill everything in the swarm, regardless of dropdown selection
@@ -289,7 +342,7 @@ class QuasarGUI:
                     relative=True
                 )
 
-    def cb_step_test(self, length=0.4):
+    def cb_step_test(self, length=0.1):
         """ Shift selected UAV +0.3m in X, then back after some time, to test the one-off command functionality."""
         for agent in self._get_target_agents():
             ex, ey, ez = agent.state.get_position()
@@ -441,6 +494,7 @@ class QuasarGUI:
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="TAKEOFF", width=100, height=40, callback=self.cb_takeoff)
                         dpg.add_button(label="LAND", width=100, height=40, callback=self.cb_land)
+                        dpg.add_button(label="BOX BOUNCE", width=120, height=40, callback=self.cb_box_bouncer)
                         hover_button = dpg.add_button(label="HOVER", width=100, height=40, callback=self.cb_stop_hover)
                         emergency_button = dpg.add_button(label="EMERGENCY STOP", width=150, height=40, callback=self.cb_emergency_stop)
                         

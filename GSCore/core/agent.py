@@ -32,7 +32,7 @@ class Agent:
             # TODO: TEMPORARY HACK - test CF1 using mellinger vs cf2 using PID
             if self.agent_id == "CF_1":
                 self.driver.cf.param.set_value('stabilizer.controller', '2') # Use Mellinger Controller
-                self.driver.cf.param.set_value('ctrlMel.mass', '36.0e-3') # Set the mass of the drone, ~36g?
+                self.driver.cf.param.set_value('ctrlMel.mass', '37.0e-3') # Set the mass of the drone, ~36g?
             return True
         
         print(f"Agent {self.agent_id} failed to connect.")
