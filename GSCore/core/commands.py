@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from scipy.interpolate import CubicSpline
+import numpy as np
 
 class DroneCmd(Enum):
     INITIALIZE = auto()
@@ -117,20 +118,24 @@ class CommandQueue: # Removed empty parenthesis
                     # Convert to numpy array for easy slicing
                     wp_array = np.array(cmd.waypoints)
                     
-                    # trajectory_builder.py exports [x, y, z, yaw, time], check if time is present
+                    # Extract the time array
                     if wp_array.shape[1] == 5:
                         t = wp_array[:, 4]
                         t = t - t[0]  # Normalize so time array starts exactly at 0
                     else:
-                        # Fallback: Assume evenly spaced in time if only 4 coordinates provided
                         t = np.linspace(0, cmd.duration, len(wp_array))
+                    
+                    # 1. FIX THE WIGGLE: Strip out duplicate overlapping points from segment joints
+                    # np.unique with return_index keeps only strictly increasing time values
+                    t_unique, indices = np.unique(t, return_index=True)
+                    wp_unique = wp_array[indices]
                         
                     # Build cubic splines for each axis against time
                     self.traj_splines = {
-                        'x': CubicSpline(t, wp_array[:, 0]),
-                        'y': CubicSpline(t, wp_array[:, 1]),
-                        'z': CubicSpline(t, wp_array[:, 2]),
-                        'yaw': CubicSpline(t, wp_array[:, 3])
+                        'x': CubicSpline(t_unique, wp_unique[:, 0], bc_type='clamped'),
+                        'y': CubicSpline(t_unique, wp_unique[:, 1], bc_type='clamped'),
+                        'z': CubicSpline(t_unique, wp_unique[:, 2], bc_type='clamped'),
+                        'yaw': CubicSpline(t_unique, wp_unique[:, 3], bc_type='clamped')
                     }
                     
                     self.mode = "TRAJECTORY"
@@ -178,13 +183,13 @@ class CommandQueue: # Removed empty parenthesis
                 syaw = float(self.traj_splines['yaw'](t_elapsed))
                 
                 # Blast the interpolated setpoint continuously at loop frequency
-                cf_manager.cf.commander.send_position_setpoint(sx, sy, sz, syaw)
+                #cf_manager.cf.commander.send_position_setpoint(sx, sy, sz, syaw)
                 
                  # Command the linear segment
-                '''cf_manager.cf.high_level_commander.go_to(
+                cf_manager.cf.high_level_commander.go_to(
                     sx, sy, sz, syaw, 
-                    self.traj_step_duration, relative=False, linear=True
-                )'''
+                    0.02, relative=False, linear=True
+                )
                 
                 # Low Level setpoint command
                 # Should be more efficient, not generating a new trajectory onboard repeatedly
@@ -258,7 +263,7 @@ class CommandQueue: # Removed empty parenthesis
         
         # 2. Transition to start of trajectory playbook
         start_wp = waypoints[0]
-        transition_duration = 5.0 # Fixed transition duration for smoothness
+        transition_duration = 2.0 # Fixed transition duration for smoothness
         self.goto(
             x=start_wp[0], 
             y=start_wp[1],
