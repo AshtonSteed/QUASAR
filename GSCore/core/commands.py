@@ -3,12 +3,15 @@ import queue
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
+from scipy.interpolate import CubicSpline
+import numpy as np
 
 class DroneCmd(Enum):
     INITIALIZE = auto()
     TAKEOFF = auto()
     LAND = auto()
     GOTO = auto()
+    STEPTEST = auto()
     START_LL_STREAM = auto()
     HOVER = auto()
     TRAJECTORY = auto()
@@ -20,6 +23,7 @@ class DroneCommand:
     y: float = 0.0
     z: float = 0.0
     yaw: float = 0.0
+    relative: bool = False
     height: float = 0.0
     duration: float = 0.0
     linear: bool = False # For future use in trajectory following
@@ -39,10 +43,9 @@ class CommandQueue: # Removed empty parenthesis
         self.interrupt_hover = False
         
         # --- TRAJECTORY TRACKING ---
-        self.current_trajectory = []
-        self.traj_step_index = 0
-        self.traj_step_duration = 0.0
-        self.traj_next_step_time = 0.0
+        self.traj_splines = None
+        self.traj_start_time = 0.0
+        self.traj_duration = 0.0
 
     def run(self, cf_manager):
         """The main 50Hz control loop"""
@@ -59,7 +62,7 @@ class CommandQueue: # Removed empty parenthesis
             # 2. Hardware Interrupt Catcher (prevent thread race conditions)
             if getattr(self, 'interrupt_hover', False):
                 print("Interrupt recieved! Halting current Maneuver.")
-                cf_manager.cf.high_level_commander.stop() # Stop drone in place and hover
+                cf_manager.cf.high_level_commander.go_to(0.0, 0.0, 0.0, 0.0, 0.1, relative=True) # Stop drone in place and hover
                 self.mode = "IDLE"                        # reset state machine
                 self.interrupt_hover = False              # clear flag
             
@@ -101,7 +104,7 @@ class CommandQueue: # Removed empty parenthesis
                     
                 elif cmd.action == DroneCmd.GOTO:
                     cf_manager.cf.high_level_commander.go_to(
-                        cmd.x, cmd.y, cmd.z, cmd.yaw, cmd.duration, relative=False
+                        cmd.x, cmd.y, cmd.z, cmd.yaw, cmd.duration, relative=cmd.relative, linear=cmd.linear
                     )
                     self.mode = "HL_BUSY"
                     self._hl_end_time = time.time() + cmd.duration
@@ -112,13 +115,48 @@ class CommandQueue: # Removed empty parenthesis
                     self._hl_end_time = time.time() + cmd.duration
                     
                 elif cmd.action == DroneCmd.TRAJECTORY:
-                    self.current_trajectory = cmd.waypoints
-                    self.traj_step_index = 0
-                    # Total time divided by number of points gives us segment timing
-                    self.traj_step_duration = cmd.duration / len(cmd.waypoints)
+                    # Convert to numpy array for easy slicing
+                    wp_array = np.array(cmd.waypoints)
+                    
+                    # Extract the time array
+                    if wp_array.shape[1] == 5:
+                        t = wp_array[:, 4]
+                        t = t - t[0]  # Normalize so time array starts exactly at 0
+                    else:
+                        t = np.linspace(0, cmd.duration, len(wp_array))
+                    
+                    # 1. FIX THE WIGGLE: Strip out duplicate overlapping points from segment joints
+                    # np.unique with return_index keeps only strictly increasing time values
+                    t_unique, indices = np.unique(t, return_index=True)
+                    wp_unique = wp_array[indices]
+                        
+                    # Build cubic splines for each axis against time
+                    self.traj_splines = {
+                        'x': CubicSpline(t_unique, wp_unique[:, 0], bc_type='clamped'),
+                        'y': CubicSpline(t_unique, wp_unique[:, 1], bc_type='clamped'),
+                        'z': CubicSpline(t_unique, wp_unique[:, 2], bc_type='clamped'),
+                        'yaw': CubicSpline(t_unique, wp_unique[:, 3], bc_type='clamped')
+                    }
+                    
                     self.mode = "TRAJECTORY"
-                    self._hl_end_time = time.time() + cmd.duration
-                    self.traj_next_step_time = time.time() # Start first point now  
+                    self.traj_duration = cmd.duration
+                    self.traj_start_time = time.time()
+                    self._hl_end_time = self.traj_start_time + cmd.duration
+                    
+                elif cmd.action == DroneCmd.STEPTEST:
+                    #cf_manager.cf.high_level_commander.go_to(
+                    #    cmd.x, cmd.y, cmd.z, cmd.yaw, 0.1, relative=False, linear=False)
+                    for i in range(50):
+                        cf_manager.cf.commander.send_position_setpoint( 
+                            cmd.x, cmd.y, cmd.z, cmd.yaw
+                        )
+                        time.sleep(0.02) # 50Hz setpoint stream for 1 second
+                    
+                    # No state change, just a one-off command
+                    
+                    # Prevent watchdog crash after step test finishes
+                    cf_manager.cf.commander.send_notify_setpoint_stop()
+                    cf_manager.cf.high_level_commander.go_to(0.0, 0.0, 0.0, 0.0, 0.1, relative=True)
             
             except queue.Empty:
                 pass # Queue is empty, just keep flying
@@ -135,29 +173,40 @@ class CommandQueue: # Removed empty parenthesis
         
         elif self.mode == "TRAJECTORY": # TRAJECTORY MODE
             
-            # Check if it's time for the next waypoint
-            if now >= self.traj_next_step_time and self.traj_step_index < len(self.current_trajectory):
-                wp = self.current_trajectory[self.traj_step_index]
+            t_elapsed = now - self.traj_start_time
+            
+            # Sample the continuous spline as long as we are within the duration
+            if t_elapsed <= self.traj_duration and self.traj_splines is not None:
+                sx = float(self.traj_splines['x'](t_elapsed))
+                sy = float(self.traj_splines['y'](t_elapsed))
+                sz = float(self.traj_splines['z'](t_elapsed))
+                syaw = float(self.traj_splines['yaw'](t_elapsed))
                 
-                # Command the linear segment
-                '''cf_manager.cf.high_level_commander.go_to(
-                    wp[0], wp[1], wp[2], wp[3], 
-                    self.traj_step_duration, relative=False, linear=True
-                )'''
+                # Blast the interpolated setpoint continuously at loop frequency
+                #cf_manager.cf.commander.send_position_setpoint(sx, sy, sz, syaw)
+                
+                 # Command the linear segment
+                cf_manager.cf.high_level_commander.go_to(
+                    sx, sy, sz, syaw, 
+                    0.02, relative=False, linear=True
+                )
                 
                 # Low Level setpoint command
                 # Should be more efficient, not generating a new trajectory onboard repeatedly
-                cf_manager.cf.commander.send_position_setpoint( 
-                    wp[0], wp[1], wp[2], wp[3]
-                )
-                
-                self.traj_step_index += 1
-                self.traj_next_step_time = now + self.traj_step_duration
+                #cf_manager.cf.commander.send_position_setpoint( 
+                #    wp[0], wp[1], wp[2], wp[3]
+                #)
 
             # Once the total duration has passed, return to IDLE
             if now >= self._hl_end_time:
+                # 1. Notify the firmware watchdog that the low-level stream is intentionally stopping
+                cf_manager.cf.commander.send_notify_setpoint_stop()
+                
+                # 2. Command the onboard high-level commander to take over and hold the current position
+                cf_manager.cf.high_level_commander.go_to(0.0, 0.0, 0.0, 0.0, 0.5, relative=True)
+                
                 self.mode = "IDLE"
-                print("Trajectory arc complete.")
+                print("Trajectory execution complete. Watchdog reset, hovering in place.")
                 
         elif self.mode == "INITIALIZING":
             
@@ -200,8 +249,8 @@ class CommandQueue: # Removed empty parenthesis
     def land(self, height=0.0, duration=2.0):
         self.command_queue.put(DroneCommand(action=DroneCmd.LAND, height=height, duration=duration))
         
-    def goto(self, x, y, z, yaw=0.0, duration=2.0, linear=False):
-        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration, linear=linear))
+    def goto(self, x, y, z, yaw=0.0, duration=2.0, linear=False, relative=False):
+        self.command_queue.put(DroneCommand(action=DroneCmd.GOTO, x=x, y=y, z=z, yaw=yaw, duration=duration, linear=linear, relative=relative))
         
     def kill_motors(self):
         self.kill = True
@@ -214,7 +263,7 @@ class CommandQueue: # Removed empty parenthesis
         
         # 2. Transition to start of trajectory playbook
         start_wp = waypoints[0]
-        transition_duration = 5.0 # Fixed transition duration for smoothness
+        transition_duration = 2.0 # Fixed transition duration for smoothness
         self.goto(
             x=start_wp[0], 
             y=start_wp[1],
@@ -229,6 +278,12 @@ class CommandQueue: # Removed empty parenthesis
         ))   
         #NOTE: not the spot for this maybe?
         print(f"Transitioning to start and beginning playbook execution. Total waypoints: {len(waypoints)}, Total duration: {total_duration}s")
+        
+    
+    def step_test(self, target_position):
+        self.command_queue.put(DroneCommand(action=DroneCmd.STEPTEST, x=target_position[0], y=target_position[1], z=target_position[2], yaw=0.0, duration=2.0))
+        
+        
         
         
         

@@ -161,7 +161,9 @@ class SystemState:
             self.target_setpoint.y = sy
             self.target_setpoint.z = sz
         
-    
+    def get_position(self):
+        with self.lock:
+            return (self.estimate_pose.x, self.estimate_pose.y, self.estimate_pose.z)
             
     def get_snapshot(self):
         """
