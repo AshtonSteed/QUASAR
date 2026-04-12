@@ -3,14 +3,26 @@ import sys
 import json
 import math
 import dearpygui.dearpygui as dpg
+import numpy as np
+from scipy.interpolate import Akima1DInterpolator
 
-from trajectory_math import TrajectoryGenerator
+
+# Some Path trickery to get access to GSCore.Core
+current_dir = os.path.dirname(os.path.abspath(__file__))
+gscore_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(gscore_dir)
+
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+from GSCore.core.trajectory_math import TrajectoryGenerator    
+    
 
 class TrajectoryBuilderGUI:
     def __init__(self):
         self.segments = []
         self.segment_counter = 0
         self.generated_waypoints = []
+        self.spline_waypoints = []
         
         # --- 3D View Camera State ---
         self.view_yaw = 0.785     # 45 degrees
@@ -102,7 +114,7 @@ class TrajectoryBuilderGUI:
         sx, sy, sz, _ = start_state
         
         self.segment_counter += 1
-        new_seg = {"id": self.segment_counter, "type": seg_type, "speed": 1.0, "n": 50}
+        new_seg = {"id": self.segment_counter, "type": seg_type, "speed": 1.0, "n": 15}
         
         if seg_type == "Linear":
             new_seg.update({"x": sx + 1.0, "y": sy, "z": sz})
@@ -122,7 +134,7 @@ class TrajectoryBuilderGUI:
         self.segment_counter += 1
         self.segments.append({
             "id": self.segment_counter, "type": "Linear",
-            "x": sx, "y": sy, "z": sz + 1.0, "speed": 1.0, "n": 50
+            "x": sx, "y": sy, "z": sz + 1.0, "speed": 1.0, "n": 3
         })
         self.refresh_segment_ui()
 
@@ -134,7 +146,7 @@ class TrajectoryBuilderGUI:
         self.segment_counter += 1
         self.segments.append({
             "id": self.segment_counter, "type": "Helical",
-            "cx": sx + 1.0, "cy": sy, "tz": sz, "r": 1.0, "sweep_deg": 360.0, "speed": 1.0, "n": 100
+            "cx": sx + 1.0, "cy": sy, "tz": sz, "r": 1.0, "sweep_deg": 360.0, "speed": 1.0, "n": 25
         })
         self.refresh_segment_ui()
 
@@ -146,7 +158,7 @@ class TrajectoryBuilderGUI:
         self.segment_counter += 1
         self.segments.append({
             "id": self.segment_counter, "type": "Circular",
-            "plane": "XY", "cx": sx, "cy": sy, "cz": sz, "r": 2.0, "speed": 1.0, "n": 100
+            "plane": "XY", "cx": sx, "cy": sy, "cz": sz, "r": 2.0, "speed": 1.0, "n": 30
         })
         self.refresh_segment_ui()
         
@@ -284,7 +296,48 @@ class TrajectoryBuilderGUI:
                 traceback.print_exc()
                 
         self.generated_waypoints = all_waypoints
+        self.spline_waypoints = []
         
+        if len(all_waypoints) >= 2:
+            try:
+                # 1. Convert to numpy array
+                wp_arr = np.array(all_waypoints)
+                t = wp_arr[:, 4]
+                
+                # 2. CubicSpline requires strictly increasing time values
+                t_unique, indices = np.unique(t, return_index=True)
+                
+                if len(t_unique) >= 4:  # Cubic splines generally want at least 4 points
+                    wp_unique = wp_arr[indices]
+                    
+                    # 3. Build cubic splines for each axis against time
+                    '''self.traj_splines = {
+                        'x': CubicSpline(t_unique, wp_unique[:, 0], bc_type='clamped'),
+                        'y': CubicSpline(t_unique, wp_unique[:, 1], bc_type='clamped'),
+                        'z': CubicSpline(t_unique, wp_unique[:, 2], bc_type='clamped'),
+                        'yaw': CubicSpline(t_unique, wp_unique[:, 3], bc_type='clamped')
+                    }'''
+                    
+                    self.traj_splines = {
+                        'x': Akima1DInterpolator(t_unique, wp_unique[:, 0]),
+                        'y': Akima1DInterpolator(t_unique, wp_unique[:, 1]),
+                        'z': Akima1DInterpolator(t_unique, wp_unique[:, 2]),
+                        'yaw': Akima1DInterpolator(t_unique, wp_unique[:, 3])
+}
+                    
+                    # 4. Sample the spline at a high resolution (e.g., 500 points) to draw a smooth curve
+                    t_high_res = np.linspace(t_unique[0], t_unique[-1], num=500)
+                    
+                    x_smooth = self.traj_splines['x'](t_high_res)
+                    y_smooth = self.traj_splines['y'](t_high_res)
+                    z_smooth = self.traj_splines['z'](t_high_res)
+                    yaw_smooth = self.traj_splines['yaw'](t_high_res)
+                    
+                    # Store for the UI to draw
+                    self.spline_waypoints = list(zip(x_smooth, y_smooth, z_smooth, yaw_smooth, t_high_res))
+            except Exception as e:
+                print(f"Failed to generate splines: {e}")
+
         if all_waypoints:
             if dpg.does_item_exist("input_duration"):
                 dpg.set_value("input_duration", round(all_waypoints[-1][4], 2))
@@ -336,12 +389,26 @@ class TrajectoryBuilderGUI:
         if not self.generated_waypoints:
             return
 
-        pts = [self.project_3d_to_2d(wp[0], wp[1], wp[2]) for wp in self.generated_waypoints]
-        dpg.draw_polyline(pts, color=(0, 255, 255, 255), thickness=2, parent="plot_3d_drawlist")
+        if self.spline_waypoints:
+            smooth_pts = [self.project_3d_to_2d(wp[0], wp[1], wp[2]) for wp in self.spline_waypoints]
+            dpg.draw_polyline(smooth_pts, color=(0, 255, 255, 255), thickness=2, parent="plot_3d_drawlist")
+        else:
+            # Fallback to straight lines if splines failed to generate
+            pts = [self.project_3d_to_2d(wp[0], wp[1], wp[2]) for wp in self.generated_waypoints]
+            dpg.draw_polyline(pts, color=(0, 255, 255, 255), thickness=2, parent="plot_3d_drawlist")
+
+        # 2. Draw the DISCRETE WAYPOINTS (knots) as small yellow dots 
+        # so you can see where the spline is being forced to intersect
+        for wp in self.generated_waypoints:
+            pt = self.project_3d_to_2d(wp[0], wp[1], wp[2])
+            dpg.draw_circle(pt, radius=2, color=(255, 255, 0, 150), fill=(255, 255, 0, 150), parent="plot_3d_drawlist")
+
+        # 3. Draw Start (Green) and End (Red) indicators
+        start_pt = self.project_3d_to_2d(self.generated_waypoints[0][0], self.generated_waypoints[0][1], self.generated_waypoints[0][2])
+        end_pt = self.project_3d_to_2d(self.generated_waypoints[-1][0], self.generated_waypoints[-1][1], self.generated_waypoints[-1][2])
         
-        if pts:
-            dpg.draw_circle(pts[0], radius=5, color=(0, 255, 0, 255), fill=(0, 255, 0, 255), parent="plot_3d_drawlist")
-            dpg.draw_circle(pts[-1], radius=5, color=(255, 0, 0, 255), fill=(255, 0, 0, 255), parent="plot_3d_drawlist")
+        dpg.draw_circle(start_pt, radius=5, color=(0, 255, 0, 255), fill=(0, 255, 0, 255), parent="plot_3d_drawlist")
+        dpg.draw_circle(end_pt, radius=5, color=(255, 0, 0, 255), fill=(255, 0, 0, 255), parent="plot_3d_drawlist")
 
     # --- Mouse Control Handlers ---
     def on_mouse_click(self, sender, app_data):

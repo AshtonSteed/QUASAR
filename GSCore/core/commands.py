@@ -3,8 +3,10 @@ import queue
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import Akima1DInterpolator
 import numpy as np
+
+
 
 class DroneCmd(Enum):
     INITIALIZE = auto()
@@ -132,11 +134,10 @@ class CommandQueue: # Removed empty parenthesis
                         
                     # Build cubic splines for each axis against time
                     self.traj_splines = {
-                        'x': CubicSpline(t_unique, wp_unique[:, 0], bc_type='clamped'),
-                        'y': CubicSpline(t_unique, wp_unique[:, 1], bc_type='clamped'),
-                        'z': CubicSpline(t_unique, wp_unique[:, 2], bc_type='clamped'),
-                        'yaw': CubicSpline(t_unique, wp_unique[:, 3], bc_type='clamped')
-                    }
+                        'x': Akima1DInterpolator(t_unique, wp_unique[:, 0]),
+                        'y': Akima1DInterpolator(t_unique, wp_unique[:, 1]),
+                        'z': Akima1DInterpolator(t_unique, wp_unique[:, 2]),
+                        'yaw': Akima1DInterpolator(t_unique, wp_unique[:, 3])}
                     
                     self.mode = "TRAJECTORY"
                     self.traj_duration = cmd.duration
