@@ -15,6 +15,7 @@ dependencies:
   - pyzmq
   - pyopengl
   - vispy
+  - pandas
 
   # --- 2. Packages for PIP to install ---
   - pip:     

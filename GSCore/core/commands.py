@@ -76,7 +76,7 @@ class CommandQueue: # Removed empty parenthesis
 
             # 5. Maintain a strict 50Hz loop (20ms)
             elapsed = time.time() - loop_start
-            time.sleep(max(0.0, 0.02 - elapsed))
+            time.sleep(max(0.0, 0.015 - elapsed))
 
     # TODO: Ensure that UAV hovers in place after ALL commands
     def _check_queue(self, cf_manager):
@@ -151,7 +151,7 @@ class CommandQueue: # Removed empty parenthesis
                         cf_manager.cf.commander.send_position_setpoint( 
                             cmd.x, cmd.y, cmd.z, cmd.yaw
                         )
-                        time.sleep(0.02) # 50Hz setpoint stream for 1 second
+                        time.sleep(0.015) # 100Hz setpoint stream for 1 second
                     
                     # No state change, just a one-off command
                     
@@ -189,15 +189,11 @@ class CommandQueue: # Removed empty parenthesis
                  # Command the linear segment
                 cf_manager.cf.high_level_commander.go_to(
                     sx, sy, sz, syaw, 
-                    0.02, relative=False, linear=True
+                    0.015
+                    , relative=False, linear=True
                 )
                 
-                # Low Level setpoint command
-                # Should be more efficient, not generating a new trajectory onboard repeatedly
-                #cf_manager.cf.commander.send_position_setpoint( 
-                #    wp[0], wp[1], wp[2], wp[3]
-                #)
-
+               
             # Once the total duration has passed, return to IDLE
             if now >= self._hl_end_time:
                 # 1. Notify the firmware watchdog that the low-level stream is intentionally stopping
