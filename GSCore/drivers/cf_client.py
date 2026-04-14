@@ -81,8 +81,8 @@ class CrazyflieDriver:
     
         self.running = True
         self._arm_kalman()
-        self.update_thread = threading.Thread(target=self._pose_sender_loop, daemon=True)
-        self.update_thread.start() # Start the thread that continuously sends pose updates to the CF
+        #self.update_thread = threading.Thread(target=self._pose_sender_loop, daemon=True)
+        #self.update_thread.start() # Start the thread that continuously sends pose updates to the CF
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
         self.control_thread.start()
         
@@ -306,13 +306,10 @@ class CrazyflieDriver:
         """
         
         self.cf.platform.send_arming_request(True)
-        time.sleep(5.0) # Wait for arming to take effect
+        time.sleep(2.0) # Wait for arming to take effect
         self.start_logging() # Start logging position data from CF
         print("Commands Ready")
         
-        i = 0
-        start_time = time.time()
-        duration_s = 30.0
         
         
         self.command_queue.run(self)

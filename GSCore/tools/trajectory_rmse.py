@@ -16,15 +16,15 @@ def calculate_trajectory_rmse(file_path):
     # Group by agent_id to ensure we only calculate RMSE for consistent trajectories
     for agent, group in df.groupby('agent_id'):
         
-        # 1. Calculate the squared differences for x, y, and z axes
+        # Calculate the squared differences for x, y, and z axes
         sq_diff_x = (group['mx'] - group['sx'])**2
         sq_diff_y = (group['my'] - group['sy'])**2
         sq_diff_z = (group['mz'] - group['sz'])**2
         
-        # 2. Sum the squared differences, then find the mean across all points (MSE)
+        # Sum the squared differences, then find the mean across all points (MSE)
         mse = (sq_diff_x + sq_diff_y + sq_diff_z).mean()
         
-        # 3. Take the square root to get RMSE
+        # Take the square root to get RMSE
         rmse = np.sqrt(mse)
         
         rmse_results[agent] = rmse

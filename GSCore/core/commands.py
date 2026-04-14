@@ -54,13 +54,23 @@ class CommandQueue: # Removed empty parenthesis
         while self.is_running:
             loop_start = time.time()
             
+            
+            
             # 1. Instant Kill Switch Override
             if self.kill:
                 cf_manager.cf.high_level_commander.stop() # Fixed self.cf_manager -> cf_manager
                 print("Emergency Stop Activated! Motors killed.")
                 self.is_running = False
                 break # Safely exits the thread loop
-
+            
+            # Send Motion capture pose to CF
+            pose = cf_manager._extract_pose_from_queue()
+            if pose and pose.valid:
+                # Send external position to CF
+                self.cf.extpos.send_extpose(
+                    pose.x, pose.y, pose.z,
+                    pose.qx, pose.qy, pose.qz, pose.qw
+                )
             # 2. Hardware Interrupt Catcher (prevent thread race conditions)
             if getattr(self, 'interrupt_hover', False):
                 print("Interrupt recieved! Halting current Maneuver.")
