@@ -188,7 +188,7 @@ class CrazyflieDriver:
     def start_logging(self):
         
         # Position Logging, High frequency logging of drone position and rotation from UAV estimator
-        pose_log = LogConfig(name='Pose', period_in_ms=30) # 67Hz, faster logging
+        pose_log = LogConfig(name='Pose', period_in_ms=50) # 67Hz, faster logging
 
         # Add all variables to log from CF parameter list
         pose_log.add_variable('stateEstimateZ.x', 'int16_t')
@@ -197,7 +197,7 @@ class CrazyflieDriver:
         pose_log.add_variable('stateEstimateZ.quat', 'uint32_t')
     
         # Dynamics Logging, Moderate frequency logging of velocity, acceleration, and angular rates from UAV estimator
-        dyn_log = LogConfig(name='Dynamics', period_in_ms=50) # 40Hz, moderate logging of estimated dynamics
+        dyn_log = LogConfig(name='Dynamics', period_in_ms=75) # 40Hz, moderate logging of estimated dynamics
         dyn_log.add_variable('stateEstimateZ.vx', 'int16_t')
         dyn_log.add_variable('stateEstimateZ.vy', 'int16_t')
         dyn_log.add_variable('stateEstimateZ.vz', 'int16_t')
@@ -211,7 +211,7 @@ class CrazyflieDriver:
         
         
         # Motor logging, Moderate frequency logging of motor setpoints for control debugging
-        motor_log = LogConfig(name='Control', period_in_ms=50) # 40Hz, moderate logging of motor stepoints
+        motor_log = LogConfig(name='Control', period_in_ms=75) # 40Hz, moderate logging of motor stepoints
         motor_log.add_variable('motor.m1', 'uint16_t')
         motor_log.add_variable('motor.m2', 'uint16_t')
         motor_log.add_variable('motor.m3', 'uint16_t')
@@ -229,7 +229,7 @@ class CrazyflieDriver:
         kal_log.add_variable('kalman.varPZ', 'float')
         
         #Control Logging, logs x and v setpoints 
-        ctrl_log = LogConfig(name='Control', period_in_ms=50)
+        ctrl_log = LogConfig(name='Control', period_in_ms=75)
         ctrl_log.add_variable('ctrltarget.x', 'float')
         ctrl_log.add_variable('ctrltarget.y', 'float')
         ctrl_log.add_variable('ctrltarget.z', 'float')

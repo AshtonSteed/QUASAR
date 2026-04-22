@@ -184,11 +184,11 @@ class QuasarGUI:
                     dpg.configure_item("status_armed", color=(255, 150, 0)) # Flash orange
                 return
             
-            agent.command_queue.takeoff(height=1.0, duration=1.0)
+            agent.command_queue.takeoff(height=0.7, duration=1.0)
             
     def cb_land(self):
         for agent in self._get_target_agents():
-            agent.command_queue.land(height=0.0, duration=1.0)
+            agent.command_queue.land(height=0.0)
             
     def cb_stop_hover(self):
         # Kill trajectory and hover in place
@@ -372,7 +372,6 @@ class QuasarGUI:
             print("ERROR: No trajectory selected!")
             return
             
-        # Robust pathing to the project root
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
         filepath = os.path.join(project_root, "trajectories", file_name)
@@ -389,47 +388,61 @@ class QuasarGUI:
                 return
 
             # ==========================================
-            # FIXED-ORIGIN SWARM ROTATION & PLACEMENT
+            # SWARM CONFIGURATION
             # ==========================================
-            
-            # 1. Get the Mission Center from the GUI input box
             mission_center = dpg.get_value("input_swarm_center")
-            cx = mission_center[0]
-            cy = mission_center[1]
-            cz = mission_center[2]
+            cx, cy, cz = mission_center[0], mission_center[1], mission_center[2]
+            theta = math.radians(self.swarm_yaw) 
             
-            # 2. Get the Swarm Rotation from your live D-Pad state
-            theta = math.radians(self.swarm_yaw)
-            
-            translated_waypoints = []
-            
-            for wp in raw_waypoints:
-                # A. Rotate the raw playbook X and Y around (0,0)
-                rot_x = (wp[0] * math.cos(theta)) - (wp[1] * math.sin(theta))
-                rot_y = (wp[0] * math.sin(theta)) + (wp[1] * math.cos(theta))
-                
-                # B. Translate (Shift) the rotated shape to the chosen Mission Center
-                new_x = rot_x + cx
-                new_y = rot_y + cy
-                
-                # C. Apply the Altitude (Playbook Z + Center Z)
-                new_z = wp[2] + cz 
-                
-                # D. Rotate the drone's nose
-                designed_yaw = wp[3] if len(wp) > 3 else 0.0
-                new_yaw = designed_yaw + self.swarm_yaw
-                
-                # Format for CommandQueue: (X, Y, Z, Yaw)
-                translated_waypoints.append((new_x, new_y, new_z, new_yaw))
-                
+            # Hardcoded formation offsets (could also be pulled from the GUI)
+            # Assuming agent.id holds the URI or a name like "CF_1"
+            FORMATION = {
+                "CF_1": (0.0, 0.0),    # Leader (flies exact playbook path)
+                "CF_2": (0.0, 0),   # Follower 1 (Back)
+                "CF_3": (0.0, 0)   # Follower 2 (front)
+            }
+
             # ==========================================
-            
-            # Hand off the completely calculated absolute path to the Drone's Queue
+            # PER-AGENT CALCULATION & DISPATCH
+            # ==========================================
             for agent in target_agents:
-                agent.command_queue.execute_trajectory(translated_waypoints, duration)
+                # 1. Get this specific drone's offset
+                # Default to (0,0) if the drone ID isn't in the dictionary
+                dx, dy = FORMATION.get(agent.agent_id, (0.0, 0.0)) 
+                theta1=0
+                if agent.agent_id == "CF_2":
+                    theta1 = theta + math.pi # Add a slight rotation for followers to make it visually interesting
+                #theta1 = theta + math.radians(agent.agent_id.count("CF_2") * 10) # Add a slight rotation for followers to make it visually interesting
+                
+                agent_specific_path = []
+                
+                for wp in raw_waypoints:
+                    # A. Apply individual formation offset to the raw playbook
+                    agent_x = wp[0] + dx
+                    agent_y = wp[1] + dy
+                    
+                    # B. Rotate the newly offset coordinate around (0,0)
+                    # This ensures the entire formation rotates, not just the paths!
+                    rot_x = (agent_x * math.cos(theta1)) - (agent_y * math.sin(theta1))
+                    rot_y = (agent_x * math.sin(theta1)) + (agent_y * math.cos(theta1))
+                    
+                    # C. Translate to Mission Center
+                    final_x = rot_x + cx
+                    final_y = rot_y + cy
+                    final_z = wp[2] + cz 
+                    
+                    # D. Rotate the drone's nose
+                    designed_yaw = wp[3] if len(wp) > 3 else 0.0
+                    final_yaw = designed_yaw + self.swarm_yaw
+                    
+                    agent_specific_path.append((final_x, final_y, final_z, final_yaw))
+                
+                # Hand off the completely calculated path for THIS specific drone
+                agent.command_queue.execute_trajectory(agent_specific_path, duration)
             
             print(f"Executing playbook: {data.get('name', file_name)}")
             print(f"Mission Center -> X: {cx:.2f}m, Y: {cy:.2f}m, Z: {cz:.2f}m | Swarm Yaw: {self.swarm_yaw:.1f} deg")    
+            
         except Exception as e:
             import traceback
             print(f"Failed to load trajectory file: {e}")

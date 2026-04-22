@@ -51,6 +51,7 @@ class FlightLogger:
                 for agent in self.swarm_dict.values():
                     snap = agent.state.get_snapshot()
                     snap['agent_id'] = agent.agent_id # Inject ID
+                    snap['time'] = time.time() # Overwrite time with actual timestamp
                     writer.writerow(snap)
                 
                 # Force the OS to write to disk occasionally so data isn't lost in a crash

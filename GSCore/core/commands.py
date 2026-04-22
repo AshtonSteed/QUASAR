@@ -67,7 +67,7 @@ class CommandQueue: # Removed empty parenthesis
             pose = cf_manager._extract_pose_from_queue()
             if pose and pose.valid:
                 # Send external position to CF
-                self.cf.extpos.send_extpose(
+                cf_manager.cf.extpos.send_extpose(
                     pose.x, pose.y, pose.z,
                     pose.qx, pose.qy, pose.qz, pose.qw
                 )
@@ -86,7 +86,7 @@ class CommandQueue: # Removed empty parenthesis
 
             # 5. Maintain a strict 50Hz loop (20ms)
             elapsed = time.time() - loop_start
-            time.sleep(max(0.0, 0.015 - elapsed))
+            time.sleep(max(0.0, 0.02 - elapsed))
 
     # TODO: Ensure that UAV hovers in place after ALL commands
     def _check_queue(self, cf_manager):
@@ -161,7 +161,7 @@ class CommandQueue: # Removed empty parenthesis
                         cf_manager.cf.commander.send_position_setpoint( 
                             cmd.x, cmd.y, cmd.z, cmd.yaw
                         )
-                        time.sleep(0.015) # 100Hz setpoint stream for 1 second
+                        time.sleep(0.02) # 100Hz setpoint stream for 1 second
                     
                     # No state change, just a one-off command
                     
@@ -199,7 +199,7 @@ class CommandQueue: # Removed empty parenthesis
                  # Command the linear segment
                 cf_manager.cf.high_level_commander.go_to(
                     sx, sy, sz, syaw, 
-                    0.015
+                    0.02
                     , relative=False, linear=True
                 )
                 
@@ -264,8 +264,15 @@ class CommandQueue: # Removed empty parenthesis
         
     def execute_trajectory(self, waypoints, total_duration):
         """Helper to push the trajectory into the queue"""
-        self.stop_and_hover() # Clear out any existing commands to ensure a clean trajectory start
         
+        # 1. FIX: Do NOT use self.stop_and_hover() here, as the asynchronous 
+        # interrupt flag will randomly kill the following GOTO command.
+        with self.command_queue.mutex:
+            self.command_queue.queue.clear()
+            
+        # Optional: Inject a brief synchronous hover to arrest any current momentum
+        self.command_queue.put(DroneCommand(action=DroneCmd.HOVER, duration=0.2))
+
         if not waypoints: return # Guard against empty trajectories
         
         # 2. Transition to start of trajectory playbook
@@ -276,14 +283,15 @@ class CommandQueue: # Removed empty parenthesis
             y=start_wp[1],
             z=start_wp[2],
             yaw=start_wp[3],
-            duration = transition_duration
+            duration=transition_duration
         )
+        
         self.command_queue.put(DroneCommand(
             action=DroneCmd.TRAJECTORY, 
             waypoints=waypoints, 
             duration=total_duration
         ))   
-        #NOTE: not the spot for this maybe?
+        
         print(f"Transitioning to start and beginning playbook execution. Total waypoints: {len(waypoints)}, Total duration: {total_duration}s")
         
     

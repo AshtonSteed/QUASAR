@@ -32,7 +32,7 @@ def calculate_trajectory_rmse(file_path):
     return rmse_results
 
 # Example usage:
-file_path = '../../flight_log_gnar1.csv'
+file_path = '../../WobbleTest.csv'
 results = calculate_trajectory_rmse(file_path)
 
 print("3D Trajectory RMSE Results:")
