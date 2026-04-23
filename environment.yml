@@ -16,6 +16,7 @@ dependencies:
   - pyopengl
   - vispy
   - pandas
+  - matplotlib
 
   # --- 2. Packages for PIP to install ---
   - pip:     
